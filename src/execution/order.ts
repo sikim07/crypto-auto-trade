@@ -111,6 +111,19 @@ export const fetchVolume = async (
   return account?.balance ?? "0";
 };
 
+/** 매수 평균 단가 조회 (체결가 기준, 해당 마켓 코인) */
+export const fetchAvgBuyPrice = async (
+  accessKey: string,
+  secretKey: string,
+  market: string,
+): Promise<number> => {
+  const currency = market.replace("KRW-", "");
+  const accounts = await getAccounts(accessKey, secretKey);
+  const account = accounts.find((a) => a.currency === currency);
+  if (!account?.avg_buy_price) return 0;
+  return parseFloat(account.avg_buy_price);
+};
+
 export interface SellResult {
   ok: boolean;
   order?: UpbitOrderDetail;

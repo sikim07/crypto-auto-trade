@@ -24,9 +24,10 @@ export const MIN_ORDER_KRW = 5000;
 
 /** 수익률 (비용 차감 후 순수익 기준) */
 export const COST_PCT = 0.25;
+/** 익절 구간: 순수익이 이 구간 안에 있을 때 익절 */
 export const TAKE_PROFIT_PCT_MIN = 1.5;
 export const TAKE_PROFIT_PCT_MAX = 2.0;
-export const STOP_LOSS_PCT_MIN = -2.0;
+/** 손절: 순수익이 이 값 이하일 때 손절 (상한 -2% 넘지 않도록 -1.5에서 절단) */
 export const STOP_LOSS_PCT_MAX = -1.5;
 
 /** RSI 익절 (순수익이 이 이상일 때만 RSI 70 이상에서 매도) */

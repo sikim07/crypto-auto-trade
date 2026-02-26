@@ -8,6 +8,7 @@ import {
   executeMarketBuy,
   executeMarketSell,
   fetchVolume,
+  fetchAvgBuyPrice,
   fetchKrwBalance,
 } from "./execution/order";
 import { CANDLE_WINDOW_SIZE } from "./config";
@@ -97,9 +98,21 @@ const run = async (): Promise<void> => {
     console.log("매수 신호:", buySignal.reason);
     const res = await executeMarketBuy(ACCESS_KEY, SECRET_KEY, market);
     if (res.ok && res.order) {
-      console.log("매수 체결:", market, res.order.price, "원");
       const vol = await fetchVolume(ACCESS_KEY, SECRET_KEY, market);
-      position = { market, buyPrice: price, volume: vol };
+      const avgBuyPrice = await fetchAvgBuyPrice(
+        ACCESS_KEY,
+        SECRET_KEY,
+        market,
+      );
+      const buyPriceForPosition = avgBuyPrice > 0 ? avgBuyPrice : price;
+      console.log(
+        "매수 체결:",
+        market,
+        buyPriceForPosition.toFixed(0),
+        "원",
+        avgBuyPrice > 0 ? "(체결평균가)" : "(신호가)",
+      );
+      position = { market, buyPrice: buyPriceForPosition, volume: vol };
       currentMarkets = [market];
       unsubscribeTicker();
       subscribeTicker([market], handleTicker);

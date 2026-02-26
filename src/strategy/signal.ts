@@ -11,7 +11,6 @@ import {
   COST_PCT,
   TAKE_PROFIT_PCT_MIN,
   TAKE_PROFIT_PCT_MAX,
-  STOP_LOSS_PCT_MIN,
   STOP_LOSS_PCT_MAX,
   RSI_TAKE_PROFIT,
   RSI_TAKE_PROFIT_MIN_PCT,
@@ -99,7 +98,14 @@ export const checkSellSignal = (
     return { shouldSell: true, reason: `손절 (순수익 ${netPct.toFixed(2)}%)` };
   }
   if (netPct >= TAKE_PROFIT_PCT_MIN) {
-    return { shouldSell: true, reason: `익절 (순수익 ${netPct.toFixed(2)}%)` };
+    const inBand =
+      netPct >= TAKE_PROFIT_PCT_MIN && netPct <= TAKE_PROFIT_PCT_MAX;
+    return {
+      shouldSell: true,
+      reason: inBand
+        ? `익절 (순수익 ${netPct.toFixed(2)}%)`
+        : `익절 상한 돌파 (순수익 ${netPct.toFixed(2)}%)`,
+    };
   }
 
   const candles = getCandles(market);
