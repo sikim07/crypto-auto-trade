@@ -29,8 +29,9 @@ export const TAKE_PROFIT_PCT_MAX = 2.0;
 export const STOP_LOSS_PCT_MIN = -2.0;
 export const STOP_LOSS_PCT_MAX = -1.5;
 
-/** RSI 익절 */
+/** RSI 익절 (순수익이 이 이상일 때만 RSI 70 이상에서 매도) */
 export const RSI_TAKE_PROFIT = 70;
+export const RSI_TAKE_PROFIT_MIN_PCT = 0.5;
 
 /** 상태 확정 */
 export const ORDER_WAIT_MS = 500;

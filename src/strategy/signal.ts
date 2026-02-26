@@ -14,6 +14,7 @@ import {
   STOP_LOSS_PCT_MIN,
   STOP_LOSS_PCT_MAX,
   RSI_TAKE_PROFIT,
+  RSI_TAKE_PROFIT_MIN_PCT,
 } from "../config";
 
 const pricesFromCandles = (candles: { trade_price: number }[]): number[] =>
@@ -86,7 +87,7 @@ export const getNetProfitPct = (
   return raw - COST_PCT;
 };
 
-/** 매도: 손절(최우선), 익절, RSI 70 이상 */
+/** 매도: 손절(최우선), 익절, RSI 70 이상(순수익 RSI_TAKE_PROFIT_MIN_PCT 이상일 때만) */
 export const checkSellSignal = (
   market: string,
   buyPrice: number,
@@ -102,11 +103,11 @@ export const checkSellSignal = (
   }
 
   const candles = getCandles(market);
-  if (candles.length >= 20) {
+  if (candles.length >= 20 && netPct >= RSI_TAKE_PROFIT_MIN_PCT) {
     const prices = pricesFromCandles(candles);
     const rsi = calculateRSI(prices);
     if (rsi >= RSI_TAKE_PROFIT) {
-      return { shouldSell: true, reason: `RSI 익절 (${rsi.toFixed(1)})` };
+      return { shouldSell: true, reason: `RSI 익절 (${rsi.toFixed(1)}, 순수익 ${netPct.toFixed(2)}%)` };
     }
   }
 
