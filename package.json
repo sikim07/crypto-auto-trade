@@ -1,0 +1,27 @@
+{
+  "name": "crypto-auto-trade",
+  "version": "1.0.0",
+  "description": "Upbit KRW auto-trading bot (1m candle, BB/RSI/MACD)",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "ts-node src/index.ts",
+    "test:rest": "node dist/scripts/testRest.js",
+    "test:indicators": "node dist/scripts/testIndicators.js",
+    "test:ws": "node dist/scripts/testWsCandle.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "axios": "^1.6.0",
+    "dotenv": "^16.3.1",
+    "ws": "^8.14.2"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "@types/ws": "^8.5.10",
+    "typescript": "^5.3.0"
+  }
+}

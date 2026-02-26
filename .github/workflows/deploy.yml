@@ -1,0 +1,86 @@
+name: Deploy to Vultr
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      # 1. GitHub 저장소 코드 가져오기
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # 2. Vultr SSH 설정
+      - name: Set up SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.VULTR_SSH_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keyscan -H ${{ secrets.VULTR_HOST }} >> ~/.ssh/known_hosts
+
+      # 3. Vultr에 프로젝트 clone (최초 1회만 실행)
+      - name: Clone project on Vultr
+        run: |
+          ssh -i ~/.ssh/id_rsa root@${{ secrets.VULTR_HOST }} "
+            if [ ! -d ~/crypto-auto-trade ]; then
+              git clone -b main https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git ~/crypto-auto-trade
+            fi
+          "
+
+      # 4. Git remote URL 설정 및 최신 코드 업데이트
+      - name: Update project on Vultr
+        run: |
+          ssh -i ~/.ssh/id_rsa root@${{ secrets.VULTR_HOST }} "
+            cd ~/crypto-auto-trade
+            git remote set-url origin https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git
+            git fetch --all
+            git checkout main
+            git reset --hard origin/main
+            git clean -fd
+          "
+
+      # 5. 의존성 설치
+      - name: Install dependencies
+        run: |
+          ssh -i ~/.ssh/id_rsa root@${{ secrets.VULTR_HOST }} "
+            cd ~/crypto-auto-trade
+            npm ci
+          "
+
+      # 6. 빌드
+      - name: Build
+        run: |
+          ssh -i ~/.ssh/id_rsa root@${{ secrets.VULTR_HOST }} "
+            cd ~/crypto-auto-trade
+            echo '🗑️  기존 빌드 파일 삭제...'
+            rm -rf dist
+            npm run build
+            echo '✅ 빌드 완료'
+          "
+
+      # 7. .env 확인 (서버에 직접 생성한 .env 사용)
+      - name: Check .env on server
+        run: |
+          ssh -i ~/.ssh/id_rsa root@${{ secrets.VULTR_HOST }} "
+            cd ~/crypto-auto-trade
+            if [ ! -f .env ]; then
+              echo '⚠️  .env 파일이 서버에 없습니다. 서버에 .env 파일을 생성해주세요.'
+              exit 1
+            fi
+            echo '✅ 서버의 .env 파일을 사용합니다.'
+          "
+
+      # 8. PM2 프로세스 재시작
+      - name: Restart PM2 process
+        run: |
+          ssh -i ~/.ssh/id_rsa root@${{ secrets.VULTR_HOST }} "
+            cd ~/crypto-auto-trade
+            pm2 stop crypto-auto-trade 2>/dev/null || true
+            pm2 delete crypto-auto-trade 2>/dev/null || true
+            pm2 start ecosystem.config.js
+            pm2 save
+            pm2 list
+          "
