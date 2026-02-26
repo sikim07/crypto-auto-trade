@@ -24,6 +24,11 @@ interface Position {
 
 let position: Position | null = null;
 let currentMarkets: string[] = [];
+/** 동시 매수 신호로 인한 중복 매수 방지 */
+let isBuying = false;
+
+const sleep = (ms: number): Promise<void> =>
+  new Promise((r) => setTimeout(r, ms));
 
 const run = async (): Promise<void> => {
   if (!ACCESS_KEY || !SECRET_KEY) {
@@ -84,6 +89,17 @@ const run = async (): Promise<void> => {
           console.log("매도 체결:", position.market, position.volume);
           position = null;
           currentMarkets = await selectAndLoad();
+          if (currentMarkets.length === 0) {
+            console.warn("매도 후 종목 선정 없음, 30초 후 재시도...");
+            await sleep(30000);
+            currentMarkets = await selectAndLoad();
+          }
+          if (currentMarkets.length === 0) {
+            console.error(
+              "치명적: 재시도 후에도 종목 선정 실패. 프로세스 종료.",
+            );
+            process.exit(1);
+          }
           subscribeTicker(currentMarkets, handleTicker);
         } else {
           console.error("매도 실패:", res.message);
@@ -93,31 +109,46 @@ const run = async (): Promise<void> => {
     }
 
     if (!currentMarkets.includes(market)) return;
+    if (isBuying) return;
     const buySignal = checkBuySignal(market, price);
     if (!buySignal.shouldBuy) return;
-    console.log("매수 신호:", buySignal.reason);
-    const res = await executeMarketBuy(ACCESS_KEY, SECRET_KEY, market);
-    if (res.ok && res.order) {
-      const vol = await fetchVolume(ACCESS_KEY, SECRET_KEY, market);
-      const avgBuyPrice = await fetchAvgBuyPrice(
-        ACCESS_KEY,
-        SECRET_KEY,
-        market,
-      );
-      const buyPriceForPosition = avgBuyPrice > 0 ? avgBuyPrice : price;
-      console.log(
-        "매수 체결:",
-        market,
-        buyPriceForPosition.toFixed(0),
-        "원",
-        avgBuyPrice > 0 ? "(체결평균가)" : "(신호가)",
-      );
-      position = { market, buyPrice: buyPriceForPosition, volume: vol };
-      currentMarkets = [market];
-      unsubscribeTicker();
-      subscribeTicker([market], handleTicker);
-    } else {
-      console.error("매수 실패:", res.message);
+    isBuying = true;
+    try {
+      console.log("매수 신호:", buySignal.reason);
+      const res = await executeMarketBuy(ACCESS_KEY, SECRET_KEY, market);
+      if (res.ok && res.order) {
+        let vol = await fetchVolume(ACCESS_KEY, SECRET_KEY, market);
+        if (parseFloat(vol) <= 0) {
+          await sleep(300);
+          vol = await fetchVolume(ACCESS_KEY, SECRET_KEY, market);
+          if (parseFloat(vol) <= 0) {
+            console.warn(
+              "매수 체결 후 보유 수량 0 - 계정 반영 지연. 수량 재조회 실패.",
+            );
+          }
+        }
+        const avgBuyPrice = await fetchAvgBuyPrice(
+          ACCESS_KEY,
+          SECRET_KEY,
+          market,
+        );
+        const buyPriceForPosition = avgBuyPrice > 0 ? avgBuyPrice : price;
+        console.log(
+          "매수 체결:",
+          market,
+          buyPriceForPosition.toFixed(0),
+          "원",
+          avgBuyPrice > 0 ? "(체결평균가)" : "(신호가)",
+        );
+        position = { market, buyPrice: buyPriceForPosition, volume: vol };
+        currentMarkets = [market];
+        unsubscribeTicker();
+        subscribeTicker([market], handleTicker);
+      } else {
+        console.error("매수 실패:", res.message);
+      }
+    } finally {
+      isBuying = false;
     }
   };
 
