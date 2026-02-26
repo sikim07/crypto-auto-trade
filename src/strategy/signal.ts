@@ -107,7 +107,10 @@ export const checkSellSignal = (
     const prices = pricesFromCandles(candles);
     const rsi = calculateRSI(prices);
     if (rsi >= RSI_TAKE_PROFIT) {
-      return { shouldSell: true, reason: `RSI 익절 (${rsi.toFixed(1)}, 순수익 ${netPct.toFixed(2)}%)` };
+      return {
+        shouldSell: true,
+        reason: `RSI 익절 (${rsi.toFixed(1)}, 순수익 ${netPct.toFixed(2)}%)`,
+      };
     }
   }
 
