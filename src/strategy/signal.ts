@@ -32,7 +32,7 @@ export interface SellSignalResult {
   reason?: string;
 }
 
-/** 매수: BB 하단 터치, RSI 30 이하 상승 반전, MACD 히스토그램 상승 또는 골든크로스, 거래량 급증 */
+/** 매수: BB 하단 터치, RSI 32 이하 상승 반전, MACD 히스토그램 상승 또는 골든크로스, 거래량 급증(마지막 마감 봉 기준) */
 export const checkBuySignal = (
   market: string,
   currentPrice: number,
@@ -49,11 +49,20 @@ export const checkBuySignal = (
     const rsi = calculateRSI(prices);
     const rsiPrev = calculateRSI(prices.slice(0, -1));
     const macd = calculateMACD(prices);
-    const lastVolume = volumes.length > 0 ? volumes[volumes.length - 1] : 0;
-    const volRatio = getVolumeRatio(lastVolume, volumes, VOLUME_AVG_PERIOD);
+    // 마지막 봉이 진행 중(거래량 0)이면 직전 마감 봉 기준으로 거래량 비율 계산
+    const isCurrentCandleOpen =
+      volumes.length > 1 && volumes[volumes.length - 1] === 0;
+    const closedVolumes = isCurrentCandleOpen ? volumes.slice(0, -1) : volumes;
+    const lastClosedVolume =
+      closedVolumes.length > 0 ? closedVolumes[closedVolumes.length - 1] : 0;
+    const volRatio = getVolumeRatio(
+      lastClosedVolume,
+      closedVolumes,
+      VOLUME_AVG_PERIOD,
+    );
 
     const condBB = currentPrice <= bb.lower;
-    const condRsi = rsiPrev <= 30 && rsi > rsiPrev;
+    const condRsi = rsiPrev <= 32 && rsi > rsiPrev;
     const condMacd =
       macd.histogram > macd.prevHistogram ||
       (macd.prevMacd <= macd.prevSignal && macd.macd > macd.signal);
