@@ -60,8 +60,10 @@ export const MACD_SIGNAL = 9;
 export const VOLUME_SURGE_RATIO = 1.5;
 export const VOLUME_AVG_PERIOD = 20;
 
-/** RSI 과매도 기준 (Wilder's RSI 표준: 30) */
-export const RSI_OVERSOLD = 30;
+/** RSI 과매도 기준 (Wilder's RSI 기반, 1분봉 스캘핑용 완화) */
+export const RSI_OVERSOLD = 35;
+/** RSI 계산에 사용할 최근 캔들 수 (전체 200개 중 최근 N개만 사용하여 반응성 확보) */
+export const RSI_LOOKBACK = 50;
 /** RSI 반등 최소 증가폭 (직전 봉 대비) */
 export const RSI_MIN_BOUNCE = 2;
 

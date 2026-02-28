@@ -16,6 +16,7 @@ import {
   RSI_TAKE_PROFIT_MIN_PCT,
   RSI_OVERSOLD,
   RSI_MIN_BOUNCE,
+  RSI_LOOKBACK,
   MAX_HOLD_MINUTES,
   TRAILING_STOP_ACTIVATE_PCT,
   TRAILING_STOP_OFFSET_PCT,
@@ -54,8 +55,9 @@ export const checkBuySignal = (
     const prices = pricesFromCandles(candles);
     const volumes = volumesFromCandles(candles);
     const bb = calculateBollingerBands(prices);
-    const rsi = calculateRSI(prices);
-    const rsiPrev = calculateRSI(prices.slice(0, -1));
+    const rsiPrices = prices.slice(-RSI_LOOKBACK);
+    const rsi = calculateRSI(rsiPrices);
+    const rsiPrev = calculateRSI(rsiPrices.slice(0, -1));
     const macd = calculateMACD(prices);
 
     const isCurrentCandleOpen =
