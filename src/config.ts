@@ -26,8 +26,13 @@ export const BALANCE_USAGE_RATIO = 0.999;
 export const MIN_RESERVE_KRW = 10000;
 export const MIN_ORDER_KRW = 5000;
 
-/** 수익률 (비용 차감 후 순수익 기준) */
-export const COST_PCT = 0.25;
+/** 수수료 (업비트 KRW 마켓 기본 0.05%, 쿠폰 미적용 시 0.25%) */
+export const FEE_BUY_PCT = 0.05;
+export const FEE_SELL_PCT = 0.05;
+/** 시장가 슬리피지 예상치 (고변동 코인은 상향 조정 권장) */
+export const SLIPPAGE_PCT = 0.15;
+/** 총 거래 비용 = 왕복 수수료 + 슬리피지 */
+export const COST_PCT = FEE_BUY_PCT + FEE_SELL_PCT + SLIPPAGE_PCT;
 /** 익절 구간: 순수익이 이 구간 안에 있을 때 익절 */
 export const TAKE_PROFIT_PCT_MIN = 1.5;
 export const TAKE_PROFIT_PCT_MAX = 2.0;
@@ -55,6 +60,8 @@ export const MACD_SIGNAL = 9;
 export const VOLUME_SURGE_RATIO = 1.5;
 export const VOLUME_AVG_PERIOD = 20;
 
+/** RSI 과매도 기준 (Wilder's RSI 표준: 30) */
+export const RSI_OVERSOLD = 30;
 /** RSI 반등 최소 증가폭 (직전 봉 대비) */
 export const RSI_MIN_BOUNCE = 2;
 

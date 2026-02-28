@@ -55,24 +55,34 @@ export const calculateBollingerBands = (
   };
 };
 
+/** Wilder's Smoothed RSI (표준 RSI) */
 export const calculateRSI = (
   prices: number[],
   period: number = RSI_PERIOD,
 ): number => {
   if (prices.length < period + 1)
     throw new Error(`RSI: need ${period + 1}, got ${prices.length}`);
+
   const changes: number[] = [];
   for (let i = 1; i < prices.length; i++)
     changes.push(prices[i] - prices[i - 1]);
-  const recent = changes.slice(-period);
-  let gains = 0;
-  let losses = 0;
-  recent.forEach((d) => {
-    if (d > 0) gains += d;
-    else losses += -d;
-  });
-  const avgGain = gains / period;
-  const avgLoss = losses / period;
+
+  let avgGain = 0;
+  let avgLoss = 0;
+  for (let i = 0; i < period; i++) {
+    if (changes[i] > 0) avgGain += changes[i];
+    else avgLoss += -changes[i];
+  }
+  avgGain /= period;
+  avgLoss /= period;
+
+  for (let i = period; i < changes.length; i++) {
+    const gain = changes[i] > 0 ? changes[i] : 0;
+    const loss = changes[i] < 0 ? -changes[i] : 0;
+    avgGain = (avgGain * (period - 1) + gain) / period;
+    avgLoss = (avgLoss * (period - 1) + loss) / period;
+  }
+
   if (avgLoss === 0) return 100;
   const rs = avgGain / avgLoss;
   return 100 - 100 / (1 + rs);

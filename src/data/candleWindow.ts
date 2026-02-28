@@ -20,11 +20,12 @@ export const getCandles = (market: string): UpbitCandle[] => {
   return candleStorage.get(market) ?? [];
 };
 
-/** ticker 수신 시 실시간 갱신: 같은 분이면 마지막 캔들 high/low/close 갱신, 새 분이면 캔들 추가 후 200개 유지 */
+/** ticker 수신 시 실시간 갱신: 같은 분이면 마지막 캔들 high/low/close/volume 갱신, 새 분이면 캔들 추가 후 200개 유지 */
 export const updateFromTicker = (
   market: string,
   tradePrice: number,
   tradeTimestamp: number,
+  tradeVolume?: number,
 ): void => {
   let list = candleStorage.get(market);
   if (!list || list.length === 0) return;
@@ -37,6 +38,9 @@ export const updateFromTicker = (
     last.trade_price = tradePrice;
     last.high_price = Math.max(last.high_price, tradePrice);
     last.low_price = Math.min(last.low_price, tradePrice);
+    if (tradeVolume !== undefined && tradeVolume > 0) {
+      last.candle_acc_trade_volume += tradeVolume;
+    }
     return;
   }
 
@@ -50,7 +54,7 @@ export const updateFromTicker = (
     trade_price: tradePrice,
     timestamp: minStart,
     candle_acc_trade_price: 0,
-    candle_acc_trade_volume: 0,
+    candle_acc_trade_volume: tradeVolume ?? 0,
   };
   list = [...list, newCandle];
   if (list.length > CANDLE_WINDOW_SIZE) {

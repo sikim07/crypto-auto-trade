@@ -9,6 +9,7 @@ export interface TickerMessage {
   code?: string;
   trade_price: number;
   trade_timestamp: number;
+  trade_volume?: number;
   acc_trade_volume_24h?: number;
   [key: string]: unknown;
 }

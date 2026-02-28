@@ -14,6 +14,7 @@ import {
   STOP_LOSS_PCT_MAX,
   RSI_TAKE_PROFIT,
   RSI_TAKE_PROFIT_MIN_PCT,
+  RSI_OVERSOLD,
   RSI_MIN_BOUNCE,
   MAX_HOLD_MINUTES,
   TRAILING_STOP_ACTIVATE_PCT,
@@ -39,7 +40,7 @@ export interface SellSignalResult {
   reason?: string;
 }
 
-/** 매수: BB 하단 터치, RSI 32 이하 상승 반전, MACD 히스토그램 상승 또는 골든크로스, 거래량 급증(마지막 마감 봉 기준) */
+/** 매수: BB 하단 터치, RSI 과매도 반등, MACD 히스토그램 상승 또는 골든크로스, 거래량 급증(마지막 마감 봉 기준) */
 export const checkBuySignal = (
   market: string,
   currentPrice: number,
@@ -70,7 +71,7 @@ export const checkBuySignal = (
     );
 
     const condBB = currentPrice <= bb.lower;
-    const condRsi = rsiPrev <= 32 && rsi > rsiPrev + RSI_MIN_BOUNCE;
+    const condRsi = rsiPrev <= RSI_OVERSOLD && rsi > rsiPrev + RSI_MIN_BOUNCE;
     const condMacd =
       (macd.histogram > macd.prevHistogram && macd.prevHistogram < 0) ||
       (macd.prevMacd <= macd.prevSignal && macd.macd > macd.signal);

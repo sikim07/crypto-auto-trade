@@ -168,10 +168,16 @@ const run = async (): Promise<void> => {
     code?: string;
     trade_price: number;
     trade_timestamp: number;
+    trade_volume?: number;
   }): Promise<void> => {
     const market = (data.market ?? data.code) as string;
     if (!market) return;
-    updateFromTicker(market, data.trade_price, data.trade_timestamp);
+    updateFromTicker(
+      market,
+      data.trade_price,
+      data.trade_timestamp,
+      data.trade_volume,
+    );
     const price = data.trade_price;
 
     resetDailyLossIfNewDay();
