@@ -30,6 +30,7 @@ const resetWatchdog = (): void => {
 
 const connect = (markets: string[], callback: TickerCallback): void => {
   if (ws) {
+    logger.info(LOG_SOURCE, "기존 WebSocket 연결 종료 후 재연결");
     try {
       ws.close();
     } catch {
@@ -38,12 +39,20 @@ const connect = (markets: string[], callback: TickerCallback): void => {
     ws = null;
   }
 
+  logger.info(
+    LOG_SOURCE,
+    "WebSocket 연결 시도: %s (%s개 종목)",
+    markets.join(", "),
+    String(markets.length),
+  );
+
   const socket = new WebSocket(WS_URL);
   ws = socket;
   subscribedMarkets = markets;
   onTicker = callback;
 
   socket.on("open", () => {
+    logger.info(LOG_SOURCE, "WebSocket 연결 성공, 티커 구독 요청");
     const message = [
       { ticket: `ticket-${Date.now()}` },
       { type: "ticker", codes: markets, isOnlyRealtime: true },
@@ -58,7 +67,7 @@ const connect = (markets: string[], callback: TickerCallback): void => {
       const parsed = JSON.parse(data.toString()) as TickerMessage;
       if (onTicker && (parsed.market || parsed.code)) onTicker(parsed);
     } catch {
-      // ignore parse error
+      logger.debug(LOG_SOURCE, "메시지 파싱 실패");
     }
   });
 
@@ -66,7 +75,13 @@ const connect = (markets: string[], callback: TickerCallback): void => {
     logger.error(LOG_SOURCE, "WebSocket 오류: %s", (err as Error).message);
   });
 
-  socket.on("close", () => {
+  socket.on("close", (code, reason) => {
+    logger.warn(
+      LOG_SOURCE,
+      "WebSocket 연결 종료 (code: %s, reason: %s)",
+      String(code),
+      reason?.toString() ?? "없음",
+    );
     ws = null;
     if (watchdogTimer) {
       clearTimeout(watchdogTimer);

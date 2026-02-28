@@ -1,6 +1,18 @@
 /**
- * 공통 로거: 타임스탬프, 출처(source), 레벨(INFO/WARN/ERROR) 포함
+ * 공통 로거: 타임스탬프, 출처(source), 레벨(DEBUG/INFO/WARN/ERROR) 포함
+ * LOG_LEVEL 환경변수로 최소 출력 레벨 제어 (기본: INFO)
  */
+const LOG_LEVELS: Record<string, number> = {
+  DEBUG: 0,
+  INFO: 1,
+  WARN: 2,
+  ERROR: 3,
+};
+
+const currentLevel: number =
+  LOG_LEVELS[(process.env.LOG_LEVEL ?? "INFO").toUpperCase()] ??
+  LOG_LEVELS.INFO;
+
 const timestamp = (): string => new Date().toISOString();
 
 const format = (
@@ -20,13 +32,20 @@ const format = (
 export type LogSource = string;
 
 export const logger = {
+  debug: (source: LogSource, message: string, ...args: unknown[]): void => {
+    if (currentLevel <= LOG_LEVELS.DEBUG)
+      console.log(format("DEBUG", source, message, ...args));
+  },
   info: (source: LogSource, message: string, ...args: unknown[]): void => {
-    console.log(format("INFO", source, message, ...args));
+    if (currentLevel <= LOG_LEVELS.INFO)
+      console.log(format("INFO", source, message, ...args));
   },
   warn: (source: LogSource, message: string, ...args: unknown[]): void => {
-    console.warn(format("WARN", source, message, ...args));
+    if (currentLevel <= LOG_LEVELS.WARN)
+      console.warn(format("WARN", source, message, ...args));
   },
   error: (source: LogSource, message: string, ...args: unknown[]): void => {
-    console.error(format("ERROR", source, message, ...args));
+    if (currentLevel <= LOG_LEVELS.ERROR)
+      console.error(format("ERROR", source, message, ...args));
   },
 };

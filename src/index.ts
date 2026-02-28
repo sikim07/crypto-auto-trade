@@ -13,7 +13,6 @@ import {
   executeMarketSell,
   fetchVolume,
   fetchAvgBuyPrice,
-  fetchKrwBalance,
 } from "./execution/order";
 import {
   CANDLE_WINDOW_SIZE,
@@ -38,16 +37,24 @@ interface Position {
 let position: Position | null = null;
 let currentMarkets: string[] = [];
 let isBuying = false;
+let isSelling = false;
 
 let dailyLossPct = 0;
+let dailyTradeCount = 0;
 let lastResetDate = new Date().toDateString();
+let dailyLimitLogged = false;
+
+/** 마지막으로 수신한 종목별 가격 (포지션 모니터링용) */
+const lastPrices: Record<string, number> = {};
 
 const resetDailyLossIfNewDay = (): void => {
   const today = new Date().toDateString();
   if (today !== lastResetDate) {
     dailyLossPct = 0;
+    dailyTradeCount = 0;
+    dailyLimitLogged = false;
     lastResetDate = today;
-    logger.info(LOG_SOURCE, "일일 손실 카운터 초기화");
+    logger.info(LOG_SOURCE, "일일 카운터 초기화 (새 날짜: %s)", today);
   }
 };
 
@@ -87,17 +94,53 @@ const run = async (): Promise<void> => {
   /** 마지막 종목 선정 시각 (재선정 주기 판단용) */
   let lastSelectTime = Date.now();
 
-  /** 주기: 캔들 REST 갱신(거래량 보정) + 매수 없을 때 N분 경과 시 종목 재선정 */
+  /** 주기: 캔들 REST 갱신(거래량 보정) + 포지션 상태 로그 + 매수 없을 때 N분 경과 시 종목 재선정 */
   setInterval(async () => {
     try {
       for (const market of currentMarkets) {
-        const candles = await fetchCandles(
-          market,
-          CANDLE_WINDOW_SIZE,
-          "minutes1",
-        );
-        setCandles(market, candles);
+        try {
+          const candles = await fetchCandles(
+            market,
+            CANDLE_WINDOW_SIZE,
+            "minutes1",
+          );
+          setCandles(market, candles);
+        } catch (e) {
+          logger.warn(
+            LOG_SOURCE,
+            "캔들 갱신 실패 (%s): %s",
+            market,
+            (e as Error).message,
+          );
+        }
       }
+
+      if (position) {
+        const curPrice = lastPrices[position.market];
+        if (curPrice) {
+          const netPct = getNetProfitPct(position.buyPrice, curPrice);
+          const holdMin = (Date.now() - position.buyTime) / 60_000;
+          logger.info(
+            LOG_SOURCE,
+            "[포지션] %s | 매수가 %s | 현재가 %s | 순수익 %s%% | 최대 %s%% | 보유 %s분",
+            position.market,
+            position.buyPrice.toFixed(0),
+            curPrice.toFixed(0),
+            netPct.toFixed(2),
+            position.maxNetPct.toFixed(2),
+            holdMin.toFixed(1),
+          );
+        }
+      } else {
+        logger.info(
+          LOG_SOURCE,
+          "[대기] 관심종목 %s | 일일 누적 %s%% (%s회 매매)",
+          currentMarkets.join(", "),
+          dailyLossPct.toFixed(2),
+          String(dailyTradeCount),
+        );
+      }
+
       if (
         position === null &&
         Date.now() - lastSelectTime >=
@@ -132,9 +175,11 @@ const run = async (): Promise<void> => {
     const price = data.trade_price;
 
     resetDailyLossIfNewDay();
+    lastPrices[market] = price;
 
     if (position) {
       if (position.market !== market) return;
+      if (isSelling) return;
 
       const curNetPct = getNetProfitPct(position.buyPrice, price);
       if (curNetPct > position.maxNetPct) {
@@ -148,45 +193,52 @@ const run = async (): Promise<void> => {
         { buyTime: position.buyTime, maxNetPct: position.maxNetPct },
       );
       if (sellSignal.shouldSell) {
-        logger.info(LOG_SOURCE, "매도 신호: %s", sellSignal.reason);
-        const res = await executeMarketSell(
-          ACCESS_KEY,
-          SECRET_KEY,
-          position.market,
-          position.volume,
-        );
-        if (res.ok) {
-          const finalNetPct = getNetProfitPct(position.buyPrice, price);
-          dailyLossPct += finalNetPct;
-          logger.info(
-            LOG_SOURCE,
-            "매도 체결: %s %s (순수익 %s%%, 일일 누적 %s%%)",
+        isSelling = true;
+        try {
+          logger.info(LOG_SOURCE, "매도 신호: %s", sellSignal.reason);
+          const res = await executeMarketSell(
+            ACCESS_KEY,
+            SECRET_KEY,
             position.market,
             position.volume,
-            finalNetPct.toFixed(2),
-            dailyLossPct.toFixed(2),
           );
-          position = null;
-          currentMarkets = await selectAndLoad();
-          if (currentMarkets.length === 0) {
-            logger.warn(
+          if (res.ok) {
+            const finalNetPct = getNetProfitPct(position.buyPrice, price);
+            dailyLossPct += finalNetPct;
+            dailyTradeCount += 1;
+            logger.info(
               LOG_SOURCE,
-              "매도 후 종목 선정 없음, 30초 후 재시도...",
+              "매도 체결: %s %s (순수익 %s%%, 일일 누적 %s%%, 오늘 %s번째 매매)",
+              position.market,
+              position.volume,
+              finalNetPct.toFixed(2),
+              dailyLossPct.toFixed(2),
+              String(dailyTradeCount),
             );
-            await sleep(30000);
+            position = null;
             currentMarkets = await selectAndLoad();
+            if (currentMarkets.length === 0) {
+              logger.warn(
+                LOG_SOURCE,
+                "매도 후 종목 선정 없음, 30초 후 재시도...",
+              );
+              await sleep(30000);
+              currentMarkets = await selectAndLoad();
+            }
+            if (currentMarkets.length === 0) {
+              logger.error(
+                LOG_SOURCE,
+                "치명적: 재시도 후에도 종목 선정 실패. 프로세스 종료.",
+              );
+              process.exit(1);
+            }
+            lastSelectTime = Date.now();
+            subscribeTicker(currentMarkets, handleTicker);
+          } else {
+            logger.error(LOG_SOURCE, "매도 실패: %s", res.message);
           }
-          if (currentMarkets.length === 0) {
-            logger.error(
-              LOG_SOURCE,
-              "치명적: 재시도 후에도 종목 선정 실패. 프로세스 종료.",
-            );
-            process.exit(1);
-          }
-          lastSelectTime = Date.now();
-          subscribeTicker(currentMarkets, handleTicker);
-        } else {
-          logger.error(LOG_SOURCE, "매도 실패: %s", res.message);
+        } finally {
+          isSelling = false;
         }
       }
       return;
@@ -196,11 +248,14 @@ const run = async (): Promise<void> => {
     if (isBuying) return;
 
     if (dailyLossPct <= DAILY_MAX_LOSS_PCT) {
-      logger.warn(
-        LOG_SOURCE,
-        "일일 최대 손실 한도 도달 (누적 %s%%), 매수 중단",
-        dailyLossPct.toFixed(2),
-      );
+      if (!dailyLimitLogged) {
+        logger.warn(
+          LOG_SOURCE,
+          "일일 최대 손실 한도 도달 (누적 %s%%), 매수 중단",
+          dailyLossPct.toFixed(2),
+        );
+        dailyLimitLogged = true;
+      }
       return;
     }
 

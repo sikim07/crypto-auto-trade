@@ -19,6 +19,9 @@ import {
   TRAILING_STOP_ACTIVATE_PCT,
   TRAILING_STOP_OFFSET_PCT,
 } from "../config";
+import { logger } from "../logger";
+
+const LOG_SOURCE = "signal";
 
 const pricesFromCandles = (candles: { trade_price: number }[]): number[] =>
   candles.map((c) => c.trade_price);
@@ -73,6 +76,45 @@ export const checkBuySignal = (
       (macd.prevMacd <= macd.prevSignal && macd.macd > macd.signal);
     const condVol = volRatio >= VOLUME_SURGE_RATIO;
 
+    const metCount = [condBB, condRsi, condMacd, condVol].filter(
+      Boolean,
+    ).length;
+
+    logger.debug(
+      LOG_SOURCE,
+      "[매수검토] %s | 가격 %s | BB하단 %s (%s) | RSI %s→%s (%s) | MACD hist %s→%s (%s) | 거래량비 %s (%s) | 충족 %s/4",
+      market,
+      currentPrice.toFixed(0),
+      bb.lower.toFixed(0),
+      condBB ? "O" : "X",
+      rsiPrev.toFixed(1),
+      rsi.toFixed(1),
+      condRsi ? "O" : "X",
+      macd.prevHistogram.toFixed(4),
+      macd.histogram.toFixed(4),
+      condMacd ? "O" : "X",
+      volRatio.toFixed(2),
+      condVol ? "O" : "X",
+      String(metCount),
+    );
+
+    if (metCount >= 3 && metCount < 4) {
+      const missed = [
+        !condBB && "BB",
+        !condRsi && "RSI",
+        !condMacd && "MACD",
+        !condVol && "거래량",
+      ]
+        .filter(Boolean)
+        .join(",");
+      logger.info(
+        LOG_SOURCE,
+        "[근접신호] %s | 3/4 충족, 미충족: %s",
+        market,
+        missed,
+      );
+    }
+
     if (condBB && condRsi && condMacd && condVol) {
       return { shouldBuy: true, reason: "BB+RSI+MACD+거래량 충족" };
     }
@@ -104,6 +146,20 @@ export const checkSellSignal = (
   options?: SellOptions,
 ): SellSignalResult => {
   const netPct = getNetProfitPct(buyPrice, currentPrice);
+  const holdMin = options?.buyTime
+    ? (Date.now() - options.buyTime) / 60_000
+    : 0;
+
+  logger.debug(
+    LOG_SOURCE,
+    "[매도검토] %s | 매수가 %s | 현재가 %s | 순수익 %s%% | 보유 %s분 | 최대순수익 %s%%",
+    market,
+    buyPrice.toFixed(0),
+    currentPrice.toFixed(0),
+    netPct.toFixed(2),
+    holdMin.toFixed(1),
+    (options?.maxNetPct ?? 0).toFixed(2),
+  );
 
   if (netPct <= STOP_LOSS_PCT_MAX) {
     return { shouldSell: true, reason: `손절 (순수익 ${netPct.toFixed(2)}%)` };
