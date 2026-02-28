@@ -3,7 +3,11 @@ import { getCandles as fetchCandles } from "./api/rest";
 import { setCandles, getCandles, updateFromTicker } from "./data/candleWindow";
 import { subscribeTicker, unsubscribeTicker } from "./ws/ticker";
 import { selectTopMarkets } from "./strategy/selectMarkets";
-import { checkBuySignal, checkSellSignal } from "./strategy/signal";
+import {
+  checkBuySignal,
+  checkSellSignal,
+  getNetProfitPct,
+} from "./strategy/signal";
 import {
   executeMarketBuy,
   executeMarketSell,
@@ -15,6 +19,7 @@ import {
   CANDLE_WINDOW_SIZE,
   CANDLE_REFRESH_INTERVAL_MS,
   RE_SELECT_AFTER_NO_BUY_MINUTES,
+  DAILY_MAX_LOSS_PCT,
 } from "./config";
 import { logger } from "./logger";
 
@@ -26,12 +31,25 @@ interface Position {
   market: string;
   buyPrice: number;
   volume: string;
+  buyTime: number;
+  maxNetPct: number;
 }
 
 let position: Position | null = null;
 let currentMarkets: string[] = [];
-/** 동시 매수 신호로 인한 중복 매수 방지 */
 let isBuying = false;
+
+let dailyLossPct = 0;
+let lastResetDate = new Date().toDateString();
+
+const resetDailyLossIfNewDay = (): void => {
+  const today = new Date().toDateString();
+  if (today !== lastResetDate) {
+    dailyLossPct = 0;
+    lastResetDate = today;
+    logger.info(LOG_SOURCE, "일일 손실 카운터 초기화");
+  }
+};
 
 const sleep = (ms: number): Promise<void> =>
   new Promise((r) => setTimeout(r, ms));
@@ -113,12 +131,21 @@ const run = async (): Promise<void> => {
     updateFromTicker(market, data.trade_price, data.trade_timestamp);
     const price = data.trade_price;
 
+    resetDailyLossIfNewDay();
+
     if (position) {
       if (position.market !== market) return;
+
+      const curNetPct = getNetProfitPct(position.buyPrice, price);
+      if (curNetPct > position.maxNetPct) {
+        position.maxNetPct = curNetPct;
+      }
+
       const sellSignal = checkSellSignal(
         position.market,
         position.buyPrice,
         price,
+        { buyTime: position.buyTime, maxNetPct: position.maxNetPct },
       );
       if (sellSignal.shouldSell) {
         logger.info(LOG_SOURCE, "매도 신호: %s", sellSignal.reason);
@@ -129,11 +156,15 @@ const run = async (): Promise<void> => {
           position.volume,
         );
         if (res.ok) {
+          const finalNetPct = getNetProfitPct(position.buyPrice, price);
+          dailyLossPct += finalNetPct;
           logger.info(
             LOG_SOURCE,
-            "매도 체결: %s %s",
+            "매도 체결: %s %s (순수익 %s%%, 일일 누적 %s%%)",
             position.market,
             position.volume,
+            finalNetPct.toFixed(2),
+            dailyLossPct.toFixed(2),
           );
           position = null;
           currentMarkets = await selectAndLoad();
@@ -163,6 +194,16 @@ const run = async (): Promise<void> => {
 
     if (!currentMarkets.includes(market)) return;
     if (isBuying) return;
+
+    if (dailyLossPct <= DAILY_MAX_LOSS_PCT) {
+      logger.warn(
+        LOG_SOURCE,
+        "일일 최대 손실 한도 도달 (누적 %s%%), 매수 중단",
+        dailyLossPct.toFixed(2),
+      );
+      return;
+    }
+
     const buySignal = checkBuySignal(market, price);
     if (!buySignal.shouldBuy) return;
     isBuying = true;
@@ -194,7 +235,13 @@ const run = async (): Promise<void> => {
           buyPriceForPosition.toFixed(0),
           avgBuyPrice > 0 ? "(체결평균가)" : "(신호가)",
         );
-        position = { market, buyPrice: buyPriceForPosition, volume: vol };
+        position = {
+          market,
+          buyPrice: buyPriceForPosition,
+          volume: vol,
+          buyTime: Date.now(),
+          maxNetPct: 0,
+        };
         currentMarkets = [market];
         unsubscribeTicker();
         subscribeTicker([market], handleTicker);

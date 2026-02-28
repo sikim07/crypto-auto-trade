@@ -14,6 +14,10 @@ import {
   STOP_LOSS_PCT_MAX,
   RSI_TAKE_PROFIT,
   RSI_TAKE_PROFIT_MIN_PCT,
+  RSI_MIN_BOUNCE,
+  MAX_HOLD_MINUTES,
+  TRAILING_STOP_ACTIVATE_PCT,
+  TRAILING_STOP_OFFSET_PCT,
 } from "../config";
 
 const pricesFromCandles = (candles: { trade_price: number }[]): number[] =>
@@ -49,22 +53,23 @@ export const checkBuySignal = (
     const rsi = calculateRSI(prices);
     const rsiPrev = calculateRSI(prices.slice(0, -1));
     const macd = calculateMACD(prices);
-    // 마지막 봉이 진행 중(거래량 0)이면 직전 마감 봉 기준으로 거래량 비율 계산
+
     const isCurrentCandleOpen =
       volumes.length > 1 && volumes[volumes.length - 1] === 0;
     const closedVolumes = isCurrentCandleOpen ? volumes.slice(0, -1) : volumes;
     const lastClosedVolume =
       closedVolumes.length > 0 ? closedVolumes[closedVolumes.length - 1] : 0;
+    const prevVolumes = closedVolumes.slice(0, -1);
     const volRatio = getVolumeRatio(
       lastClosedVolume,
-      closedVolumes,
+      prevVolumes,
       VOLUME_AVG_PERIOD,
     );
 
     const condBB = currentPrice <= bb.lower;
-    const condRsi = rsiPrev <= 32 && rsi > rsiPrev;
+    const condRsi = rsiPrev <= 32 && rsi > rsiPrev + RSI_MIN_BOUNCE;
     const condMacd =
-      macd.histogram > macd.prevHistogram ||
+      (macd.histogram > macd.prevHistogram && macd.prevHistogram < 0) ||
       (macd.prevMacd <= macd.prevSignal && macd.macd > macd.signal);
     const condVol = volRatio >= VOLUME_SURGE_RATIO;
 
@@ -86,17 +91,24 @@ export const getNetProfitPct = (
   return raw - COST_PCT;
 };
 
-/** 매도: 손절(최우선), 익절, RSI 70 이상(순수익 RSI_TAKE_PROFIT_MIN_PCT 이상일 때만) */
+export interface SellOptions {
+  buyTime?: number;
+  maxNetPct?: number;
+}
+
+/** 매도: 손절 → 익절 → 트레일링 스톱 → 최대 보유시간 → RSI 익절 */
 export const checkSellSignal = (
   market: string,
   buyPrice: number,
   currentPrice: number,
+  options?: SellOptions,
 ): SellSignalResult => {
   const netPct = getNetProfitPct(buyPrice, currentPrice);
 
   if (netPct <= STOP_LOSS_PCT_MAX) {
     return { shouldSell: true, reason: `손절 (순수익 ${netPct.toFixed(2)}%)` };
   }
+
   if (netPct >= TAKE_PROFIT_PCT_MIN) {
     const inBand =
       netPct >= TAKE_PROFIT_PCT_MIN && netPct <= TAKE_PROFIT_PCT_MAX;
@@ -106,6 +118,27 @@ export const checkSellSignal = (
         ? `익절 (순수익 ${netPct.toFixed(2)}%)`
         : `익절 상한 돌파 (순수익 ${netPct.toFixed(2)}%)`,
     };
+  }
+
+  if (
+    options?.maxNetPct !== undefined &&
+    options.maxNetPct >= TRAILING_STOP_ACTIVATE_PCT &&
+    netPct <= options.maxNetPct - TRAILING_STOP_OFFSET_PCT
+  ) {
+    return {
+      shouldSell: true,
+      reason: `트레일링 스톱 (고점 ${options.maxNetPct.toFixed(2)}% → 현재 ${netPct.toFixed(2)}%)`,
+    };
+  }
+
+  if (options?.buyTime !== undefined) {
+    const holdMinutes = (Date.now() - options.buyTime) / 60_000;
+    if (holdMinutes >= MAX_HOLD_MINUTES) {
+      return {
+        shouldSell: true,
+        reason: `최대 보유시간 초과 (${holdMinutes.toFixed(0)}분, 순수익 ${netPct.toFixed(2)}%)`,
+      };
+    }
   }
 
   const candles = getCandles(market);

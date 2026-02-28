@@ -111,9 +111,14 @@ export const calculateMACD = (
     macdLine.push(emaFastArr[i] - emaSlowArr[i]);
   }
   const signalLine: number[] = [];
-  for (let i = signalPeriod - 1; i < macdLine.length; i++) {
-    const slice = macdLine.slice(i - signalPeriod + 1, i + 1);
-    signalLine.push(sum(slice) / signalPeriod);
+  if (macdLine.length >= signalPeriod) {
+    const k = 2 / (signalPeriod + 1);
+    let ema = sum(macdLine.slice(0, signalPeriod)) / signalPeriod;
+    signalLine.push(ema);
+    for (let i = signalPeriod; i < macdLine.length; i++) {
+      ema = macdLine[i] * k + ema * (1 - k);
+      signalLine.push(ema);
+    }
   }
   const histogram: number[] = macdLine
     .slice(signalPeriod - 1)

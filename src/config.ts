@@ -52,5 +52,19 @@ export const MACD_SLOW = 26;
 export const MACD_SIGNAL = 9;
 
 /** 거래량 급증 비율 (직전 평균 대비) */
-export const VOLUME_SURGE_RATIO = 1.2;
+export const VOLUME_SURGE_RATIO = 1.5;
 export const VOLUME_AVG_PERIOD = 20;
+
+/** RSI 반등 최소 증가폭 (직전 봉 대비) */
+export const RSI_MIN_BOUNCE = 2;
+
+/** 최대 보유 시간 (분) — 초과 시 강제 청산 */
+export const MAX_HOLD_MINUTES = 30;
+
+/** 트레일링 스톱: 순수익이 이 값 이상 도달 후 활성화 */
+export const TRAILING_STOP_ACTIVATE_PCT = 0.8;
+/** 트레일링 스톱: 고점 대비 이 폭만큼 하락 시 매도 */
+export const TRAILING_STOP_OFFSET_PCT = 0.5;
+
+/** 일일 최대 누적 손실(%) — 초과 시 당일 매매 중단 */
+export const DAILY_MAX_LOSS_PCT = -5;

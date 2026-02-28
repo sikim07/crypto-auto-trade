@@ -20,13 +20,29 @@ export const selectTopMarkets = async (): Promise<string[]> => {
   const topCount = Math.min(50, byTradePrice.length);
   const top = byTradePrice.slice(0, topCount);
 
-  const withVolatility = top.map((t): { market: string; vol: number } => ({
-    market: t.market,
-    vol: Math.abs(t.signed_change_rate ?? 0),
-  }));
-  withVolatility.sort((a, b) => b.vol - a.vol);
+  const dropping = top
+    .filter((t) => (t.signed_change_rate ?? 0) < 0)
+    .map((t) => ({
+      market: t.market,
+      changeRate: t.signed_change_rate ?? 0,
+    }))
+    .sort((a, b) => a.changeRate - b.changeRate);
 
-  return withVolatility
+  if (dropping.length >= TARGET_MARKET_COUNT) {
+    return dropping
+      .slice(0, TARGET_MARKET_COUNT)
+      .map((x) => x.market)
+      .filter(Boolean);
+  }
+
+  const byAbsChange = top
+    .map((t) => ({
+      market: t.market,
+      vol: Math.abs(t.signed_change_rate ?? 0),
+    }))
+    .sort((a, b) => b.vol - a.vol);
+
+  return byAbsChange
     .slice(0, TARGET_MARKET_COUNT)
     .map((x) => x.market)
     .filter(Boolean);
