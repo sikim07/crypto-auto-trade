@@ -11,7 +11,11 @@ import {
   fetchAvgBuyPrice,
   fetchKrwBalance,
 } from "./execution/order";
-import { CANDLE_WINDOW_SIZE } from "./config";
+import {
+  CANDLE_WINDOW_SIZE,
+  CANDLE_REFRESH_INTERVAL_MS,
+  RE_SELECT_AFTER_NO_BUY_MINUTES,
+} from "./config";
 
 const ACCESS_KEY = process.env.ACCESS_KEY!;
 const SECRET_KEY = process.env.SECRET_KEY!;
@@ -59,6 +63,41 @@ const run = async (): Promise<void> => {
   currentMarkets = await selectAndLoad();
   if (currentMarkets.length === 0) process.exit(1);
 
+  /** 마지막 종목 선정 시각 (재선정 주기 판단용) */
+  let lastSelectTime = Date.now();
+
+  /** 주기: 캔들 REST 갱신(거래량 보정) + 매수 없을 때 N분 경과 시 종목 재선정 */
+  setInterval(async () => {
+    try {
+      for (const market of currentMarkets) {
+        const candles = await fetchCandles(
+          market,
+          CANDLE_WINDOW_SIZE,
+          "minutes1",
+        );
+        setCandles(market, candles);
+      }
+      if (
+        position === null &&
+        Date.now() - lastSelectTime >=
+          RE_SELECT_AFTER_NO_BUY_MINUTES * 60 * 1000
+      ) {
+        const next = await selectAndLoad();
+        if (next.length > 0) {
+          currentMarkets = next;
+          lastSelectTime = Date.now();
+          subscribeTicker(currentMarkets, handleTicker);
+          console.log(
+            "매수 없음 주기 경과, 종목 재선정:",
+            currentMarkets.join(", "),
+          );
+        }
+      }
+    } catch (e) {
+      console.error("[주기 작업] 오류:", (e as Error).message);
+    }
+  }, CANDLE_REFRESH_INTERVAL_MS);
+
   const handleTicker = async (data: {
     market?: string;
     code?: string;
@@ -100,6 +139,7 @@ const run = async (): Promise<void> => {
             );
             process.exit(1);
           }
+          lastSelectTime = Date.now();
           subscribeTicker(currentMarkets, handleTicker);
         } else {
           console.error("매도 실패:", res.message);

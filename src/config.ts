@@ -16,6 +16,10 @@ export const WATCHDOG_TIMEOUT_MS = 60000;
 
 /** 종목 선정 */
 export const TARGET_MARKET_COUNT = 2;
+/** 매수 없이 이 시간(분) 경과 시 종목 재선정 */
+export const RE_SELECT_AFTER_NO_BUY_MINUTES = 60;
+/** 캔들 거래량 보정용 REST 갱신 주기(ms) */
+export const CANDLE_REFRESH_INTERVAL_MS = 60 * 1000;
 
 /** 주문/잔고 */
 export const BALANCE_USAGE_RATIO = 0.999;
