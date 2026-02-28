@@ -1,5 +1,8 @@
 import WebSocket from "ws";
 import { WS_URL, WATCHDOG_TIMEOUT_MS } from "../config";
+import { logger } from "../logger";
+
+const LOG_SOURCE = "ws/ticker";
 
 export interface TickerMessage {
   market?: string;
@@ -20,7 +23,7 @@ let onTicker: TickerCallback | null = null;
 const resetWatchdog = (): void => {
   if (watchdogTimer) clearTimeout(watchdogTimer);
   watchdogTimer = setTimeout(() => {
-    console.log("[Watchdog] 무응답 감지, WebSocket 재연결");
+    logger.warn(LOG_SOURCE, "무응답 감지, WebSocket 재연결");
     connect(subscribedMarkets, onTicker!);
   }, WATCHDOG_TIMEOUT_MS);
 };
@@ -60,7 +63,7 @@ const connect = (markets: string[], callback: TickerCallback): void => {
   });
 
   socket.on("error", (err) => {
-    console.error("[WS] 오류:", (err as Error).message);
+    logger.error(LOG_SOURCE, "WebSocket 오류: %s", (err as Error).message);
   });
 
   socket.on("close", () => {

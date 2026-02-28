@@ -16,7 +16,9 @@ import {
   CANDLE_REFRESH_INTERVAL_MS,
   RE_SELECT_AFTER_NO_BUY_MINUTES,
 } from "./config";
+import { logger } from "./logger";
 
+const LOG_SOURCE = "index";
 const ACCESS_KEY = process.env.ACCESS_KEY!;
 const SECRET_KEY = process.env.SECRET_KEY!;
 
@@ -36,7 +38,8 @@ const sleep = (ms: number): Promise<void> =>
 
 const run = async (): Promise<void> => {
   if (!ACCESS_KEY || !SECRET_KEY) {
-    console.error(
+    logger.error(
+      LOG_SOURCE,
       "치명적: ACCESS_KEY, SECRET_KEY가 .env에 설정되지 않았습니다.",
     );
     process.exit(1);
@@ -45,10 +48,10 @@ const run = async (): Promise<void> => {
   const selectAndLoad = async (): Promise<string[]> => {
     const markets = await selectTopMarkets();
     if (markets.length === 0) {
-      console.error("치명적: 선정된 종목이 없습니다.");
+      logger.error(LOG_SOURCE, "치명적: 선정된 종목이 없습니다.");
       return [];
     }
-    console.log("종목 선정:", markets.join(", "));
+    logger.info(LOG_SOURCE, "종목 선정: %s", markets.join(", "));
     for (const market of markets) {
       const candles = await fetchCandles(
         market,
@@ -87,14 +90,15 @@ const run = async (): Promise<void> => {
           currentMarkets = next;
           lastSelectTime = Date.now();
           subscribeTicker(currentMarkets, handleTicker);
-          console.log(
-            "매수 없음 주기 경과, 종목 재선정:",
+          logger.info(
+            LOG_SOURCE,
+            "매수 없음 주기 경과, 종목 재선정: %s",
             currentMarkets.join(", "),
           );
         }
       }
     } catch (e) {
-      console.error("[주기 작업] 오류:", (e as Error).message);
+      logger.error(LOG_SOURCE, "주기 작업 오류: %s", (e as Error).message);
     }
   }, CANDLE_REFRESH_INTERVAL_MS);
 
@@ -117,7 +121,7 @@ const run = async (): Promise<void> => {
         price,
       );
       if (sellSignal.shouldSell) {
-        console.log("매도 신호:", sellSignal.reason);
+        logger.info(LOG_SOURCE, "매도 신호: %s", sellSignal.reason);
         const res = await executeMarketSell(
           ACCESS_KEY,
           SECRET_KEY,
@@ -125,16 +129,25 @@ const run = async (): Promise<void> => {
           position.volume,
         );
         if (res.ok) {
-          console.log("매도 체결:", position.market, position.volume);
+          logger.info(
+            LOG_SOURCE,
+            "매도 체결: %s %s",
+            position.market,
+            position.volume,
+          );
           position = null;
           currentMarkets = await selectAndLoad();
           if (currentMarkets.length === 0) {
-            console.warn("매도 후 종목 선정 없음, 30초 후 재시도...");
+            logger.warn(
+              LOG_SOURCE,
+              "매도 후 종목 선정 없음, 30초 후 재시도...",
+            );
             await sleep(30000);
             currentMarkets = await selectAndLoad();
           }
           if (currentMarkets.length === 0) {
-            console.error(
+            logger.error(
+              LOG_SOURCE,
               "치명적: 재시도 후에도 종목 선정 실패. 프로세스 종료.",
             );
             process.exit(1);
@@ -142,7 +155,7 @@ const run = async (): Promise<void> => {
           lastSelectTime = Date.now();
           subscribeTicker(currentMarkets, handleTicker);
         } else {
-          console.error("매도 실패:", res.message);
+          logger.error(LOG_SOURCE, "매도 실패: %s", res.message);
         }
       }
       return;
@@ -154,7 +167,7 @@ const run = async (): Promise<void> => {
     if (!buySignal.shouldBuy) return;
     isBuying = true;
     try {
-      console.log("매수 신호:", buySignal.reason);
+      logger.info(LOG_SOURCE, "매수 신호: %s", buySignal.reason);
       const res = await executeMarketBuy(ACCESS_KEY, SECRET_KEY, market);
       if (res.ok && res.order) {
         let vol = await fetchVolume(ACCESS_KEY, SECRET_KEY, market);
@@ -162,7 +175,8 @@ const run = async (): Promise<void> => {
           await sleep(300);
           vol = await fetchVolume(ACCESS_KEY, SECRET_KEY, market);
           if (parseFloat(vol) <= 0) {
-            console.warn(
+            logger.warn(
+              LOG_SOURCE,
               "매수 체결 후 보유 수량 0 - 계정 반영 지연. 수량 재조회 실패.",
             );
           }
@@ -173,11 +187,11 @@ const run = async (): Promise<void> => {
           market,
         );
         const buyPriceForPosition = avgBuyPrice > 0 ? avgBuyPrice : price;
-        console.log(
-          "매수 체결:",
+        logger.info(
+          LOG_SOURCE,
+          "매수 체결: %s %s 원 %s",
           market,
           buyPriceForPosition.toFixed(0),
-          "원",
           avgBuyPrice > 0 ? "(체결평균가)" : "(신호가)",
         );
         position = { market, buyPrice: buyPriceForPosition, volume: vol };
@@ -185,7 +199,7 @@ const run = async (): Promise<void> => {
         unsubscribeTicker();
         subscribeTicker([market], handleTicker);
       } else {
-        console.error("매수 실패:", res.message);
+        logger.error(LOG_SOURCE, "매수 실패: %s", res.message);
       }
     } finally {
       isBuying = false;
@@ -193,10 +207,14 @@ const run = async (): Promise<void> => {
   };
 
   subscribeTicker(currentMarkets, handleTicker);
-  console.log("봇 기동 완료. WebSocket 구독:", currentMarkets.join(", "));
+  logger.info(
+    LOG_SOURCE,
+    "봇 기동 완료. WebSocket 구독: %s",
+    currentMarkets.join(", "),
+  );
 };
 
 run().catch((e) => {
-  console.error("치명적:", (e as Error).message);
+  logger.error(LOG_SOURCE, "치명적: %s", (e as Error).message);
   process.exit(1);
 });
