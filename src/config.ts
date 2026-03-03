@@ -86,7 +86,8 @@ export const DAILY_MAX_LOSS_PCT = -5;
 /** 전략 A: 저점 정밀 타격 — RSI 과매도 기준, 거래량 평균 봉 수 */
 export const STRATEGY_A_RSI_OVERSOLD = 30;
 export const STRATEGY_A_VOLUME_AVG_PERIOD = 5;
-export const STRATEGY_A_ATR_STOP_MULT = 1.5;
+/** 전략 A 손절: 진입가 - (ATR × 이 배수) 도달 시 손절 */
+export const STRATEGY_A_ATR_STOP_MULTIPLIER = 1.5;
 
 /** 전략 C: 변동성 스퀴즈 — BB 폭 수축 상한, 거래량 비율, 몸통 비율, 트레일링, 손절, 최대 보유 */
 export const STRATEGY_C_BB_SQUEEZE_RATIO = 0.02;

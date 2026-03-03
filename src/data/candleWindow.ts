@@ -9,7 +9,8 @@ const candleStorage = new Map<string, UpbitCandle[]>();
 const storageKey = (market: string, unit: number): string =>
   `${market}:${unit}`;
 
-const minuteStart = (ts: number): number =>
+/** 타임스탬프(ms)가 속한 분의 시작 시각(ms). 진입봉 식별용 */
+export const minuteStart = (ts: number): number =>
   Math.floor(ts / MINUTE_MS) * MINUTE_MS;
 
 /** 직전 5개 1분봉으로 5분봉 1개 생성하여 5분봉 저장소에 append */

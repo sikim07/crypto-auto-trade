@@ -1,6 +1,11 @@
 import "dotenv/config";
 import { getCandles as fetchCandles } from "./api/rest";
-import { setCandles, getCandles, updateFromTicker } from "./data/candleWindow";
+import {
+  setCandles,
+  getCandles,
+  updateFromTicker,
+  minuteStart,
+} from "./data/candleWindow";
 import { subscribeTicker, unsubscribeTicker } from "./ws/ticker";
 import { selectTopMarkets } from "./strategy/selectMarkets";
 import { checkSellSignal, getNetProfitPct } from "./strategy/signal";
@@ -23,7 +28,6 @@ import {
   CANDLE_REFRESH_INTERVAL_MS,
   RE_SELECT_AFTER_NO_BUY_MINUTES,
   DAILY_MAX_LOSS_PCT,
-  STRATEGY_A_ATR_STOP_MULT,
   STRATEGY_C_TRAILING_ACTIVATE_PCT,
 } from "./config";
 import { logger } from "./logger";
@@ -460,20 +464,21 @@ const run = async (): Promise<void> => {
             `${tradeLogTimestamp()} [매매기록] 매수 | 전략${strategy ?? "legacy"} | ${market} | ${buyPriceForPosition.toFixed(0)} 원 | 일일 누적 ${dailyLossPct.toFixed(2)}% ${dailyStrBuy} (${dailyTradeCount}회) | 전체 누적 ${totalCumulativePct.toFixed(2)}% ${totalStrBuy} (${totalTradeCount}회)`,
           );
 
+          const buyTimeMs = Date.now();
           let entryLow: number | undefined;
           let entryAtr: number | undefined;
           if (strategy === "A") {
             const candles1m = getCandles(market, 1);
-            if (candles1m.length >= 1) {
-              const lastClosed = candles1m[candles1m.length - 1];
-              entryLow = lastClosed.low_price;
-            }
+            const entryMinuteStart = minuteStart(buyTimeMs);
+            const entryCandle = candles1m.find(
+              (c) => c.timestamp === entryMinuteStart,
+            );
+            if (entryCandle) entryLow = entryCandle.low_price;
             if (candles1m.length >= 15) {
               const highs = candles1m.slice(-15).map((c) => c.high_price);
               const lows = candles1m.slice(-15).map((c) => c.low_price);
               const closes = candles1m.slice(-15).map((c) => c.trade_price);
-              const atr = calculateATR(highs, lows, closes);
-              entryAtr = atr * STRATEGY_A_ATR_STOP_MULT;
+              entryAtr = calculateATR(highs, lows, closes);
             }
           }
 
@@ -481,7 +486,7 @@ const run = async (): Promise<void> => {
             market,
             buyPrice: buyPriceForPosition,
             volume: vol,
-            buyTime: Date.now(),
+            buyTime: buyTimeMs,
             maxNetPct: 0,
             strategy,
             entryLow,

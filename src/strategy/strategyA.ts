@@ -10,7 +10,7 @@ import {
   RSI_PERIOD,
   STRATEGY_A_RSI_OVERSOLD,
   STRATEGY_A_VOLUME_AVG_PERIOD,
-  STRATEGY_A_ATR_STOP_MULT,
+  STRATEGY_A_ATR_STOP_MULTIPLIER,
 } from "../config";
 import type { BuySignalResult, SellSignalResult } from "./signal";
 import type { BotPosition } from "../types";
@@ -93,30 +93,41 @@ export const checkBuySignalA = (
   }
 };
 
-/** 전략 A 매도: 익절 BB 중앙 터치, 손절 진입캔들 저점 또는 진입가-ATR*1.5 */
+/** 전략 A 매도: 익절 BB 중앙 터치, 손절 = 진입캔들 저점 이탈 또는 진입가-ATR×배수 도달(둘 중 먼저) */
 export const checkSellSignalA = (
   market: string,
   position: BotPosition,
   currentPrice: number,
 ): SellSignalResult => {
   const buyPrice = position.buyPrice;
-  const entryLow = position.entryLow ?? buyPrice;
+  const entryCandleLow = position.entryLow;
   const entryAtr = position.entryAtr ?? 0;
-  const stopPrice = Math.min(
-    entryLow,
-    buyPrice - entryAtr * STRATEGY_A_ATR_STOP_MULT,
-  );
+  const atrStopPrice = buyPrice - entryAtr * STRATEGY_A_ATR_STOP_MULTIPLIER;
+
+  const stopPrice =
+    entryCandleLow !== undefined && entryAtr > 0
+      ? Math.max(entryCandleLow, atrStopPrice)
+      : entryCandleLow !== undefined
+        ? entryCandleLow
+        : entryAtr > 0
+          ? atrStopPrice
+          : buyPrice;
+
   if (currentPrice <= stopPrice) {
+    const triggeredByEntryLow =
+      entryCandleLow !== undefined && stopPrice === entryCandleLow;
+    const stopReason = triggeredByEntryLow ? "진입캔들 저점 이탈" : "ATR 손절";
     logger.info(
       LOG_SOURCE,
-      "[시그널] %s | 손절 | 현재가 %s <= 손절가 %s",
+      "[시그널] %s | 손절(%s) | 현재가 %s <= 손절가 %s",
       market,
+      stopReason,
       currentPrice.toFixed(0),
       stopPrice.toFixed(0),
     );
     return {
       shouldSell: true,
-      reason: `전략A 손절 (가격 ${currentPrice.toFixed(0)} <= ${stopPrice.toFixed(0)})`,
+      reason: `전략A 손절 (${stopReason} 가격 ${currentPrice.toFixed(0)} <= ${stopPrice.toFixed(0)})`,
     };
   }
 
