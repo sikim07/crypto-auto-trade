@@ -1,13 +1,25 @@
-import { getCandles } from "../data/candleWindow";
+import { getCandles, minuteStart } from "../data/candleWindow";
 import { calculateRSI, calculateMACD } from "../indicators";
 import { RSI_PERIOD, MACD_SLOW, MACD_SIGNAL } from "../config";
 import type { BuySignalResult, SellSignalResult } from "./signal";
 import type { BotPosition } from "../types";
 import { logger } from "../logger";
+import type { UpbitCandle } from "../types";
 
 const LOG_SOURCE = "strategyB";
 const pricesFromCandles = (candles: { trade_price: number }[]): number[] =>
   candles.map((c) => c.trade_price);
+
+/** 현재 분과 같은 1분봉(미완성)을 제외하고 마감된 1분봉만 반환. 휩쏘 방지용 */
+function getClosed1mCandles(market: string): UpbitCandle[] {
+  const candles = getCandles(market, 1);
+  if (candles.length === 0) return [];
+  const last = candles[candles.length - 1];
+  if (minuteStart(Date.now()) <= minuteStart(last.timestamp)) {
+    return candles.slice(0, -1);
+  }
+  return candles;
+}
 
 const RSI_50 = 50;
 const RSI_40_DIVERGENCE = 40;
@@ -37,12 +49,12 @@ function hasBullishDivergence(
   return true;
 }
 
-/** 전략 B 매수: 5분봉 MACD hist>0, 1분봉 골든크로스 + RSI 50 상향(또는 다이버전스 시 RSI 40 상향) */
+/** 전략 B 매수: 5분봉 MACD hist>0, 1분봉 골든크로스 + RSI 50 상향(또는 다이버전스 시 RSI 40 상향). 1분봉은 마감된 봉만 사용(휩쏘 방지). */
 export const checkBuySignalB = (
   market: string,
   currentPrice: number,
 ): (BuySignalResult & { strategy: "B" }) | null => {
-  const candles1m = getCandles(market, 1);
+  const candles1m = getClosed1mCandles(market);
   const candles5m = getCandles(market, 5);
   const min1m = MACD_SLOW + MACD_SIGNAL + 2;
   const min5m = MACD_SLOW + MACD_SIGNAL;
@@ -64,7 +76,6 @@ export const checkBuySignalB = (
     const rsiPrices = prices1m.slice(-rsiPeriod);
     const rsiPrev = calculateRSI(rsiPrices.slice(0, -1));
     const rsiCur = calculateRSI(rsiPrices);
-    const rsiThreshold = 50;
 
     const divergencePrices = prices1m.slice(-DIVERGENCE_LOOKBACK - RSI_PERIOD);
     const rsiForBars: number[] = [];
@@ -112,13 +123,13 @@ export const checkBuySignalB = (
   }
 };
 
-/** 전략 B 매도: 익절 RSI 70 하향 돌파, 손절 MACD 데드크로스. lastRsi 반환으로 호출자가 position.lastRsi 갱신. */
+/** 전략 B 매도: 익절 RSI 70 하향 돌파, 손절 MACD 데드크로스+RSI 50 미만(확인된 반전). 1분봉은 마감된 봉만 사용. */
 export const checkSellSignalB = (
   market: string,
   position: BotPosition,
   currentPrice: number,
 ): SellSignalResult => {
-  const candles1m = getCandles(market, 1);
+  const candles1m = getClosed1mCandles(market);
   const prices = pricesFromCandles(candles1m);
   let rsiCur: number | undefined;
   if (prices.length >= RSI_PERIOD + 1) {
@@ -128,13 +139,23 @@ export const checkSellSignalB = (
   const minLen = MACD_SLOW + MACD_SIGNAL + 1;
   if (candles1m.length >= minLen) {
     const macd = calculateMACD(prices);
-    if (macd.prevMacd >= macd.prevSignal && macd.macd < macd.signal) {
-      logger.info(LOG_SOURCE, "[시그널] %s | 손절 (MACD 데드크로스)", market);
-      return {
-        shouldSell: true,
-        reason: "전략B 손절 (MACD 데드크로스)",
-        ...(typeof rsiCur === "number" && { lastRsi: rsiCur }),
-      };
+    const deadCross =
+      macd.prevMacd >= macd.prevSignal && macd.macd < macd.signal;
+    if (deadCross) {
+      const confirmed = typeof rsiCur === "number" && rsiCur < RSI_50;
+      if (confirmed) {
+        logger.info(
+          LOG_SOURCE,
+          "[시그널] %s | 손절 (MACD 데드크로스 + RSI %s)",
+          market,
+          rsiCur.toFixed(1),
+        );
+        return {
+          shouldSell: true,
+          reason: `전략B 손절 (MACD 데드크로스 + RSI ${rsiCur.toFixed(1)})`,
+          ...(typeof rsiCur === "number" && { lastRsi: rsiCur }),
+        };
+      }
     }
   }
 
