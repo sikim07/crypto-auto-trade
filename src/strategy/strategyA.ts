@@ -14,7 +14,9 @@ import {
 } from "../config";
 import type { BuySignalResult, SellSignalResult } from "./signal";
 import type { BotPosition } from "../types";
+import { logger } from "../logger";
 
+const LOG_SOURCE = "strategyA";
 const pricesFromCandles = (candles: { trade_price: number }[]): number[] =>
   candles.map((c) => c.trade_price);
 const volumesFromCandles = (
@@ -70,12 +72,23 @@ export const checkBuySignalA = (
     );
     if (volRatio <= 1) return null;
 
+    logger.info(
+      LOG_SOURCE,
+      "[시그널] %s | 매수 조건 충족 | 가격 %s | BB하단·RSI30상향·거래량",
+      market,
+      currentPrice.toFixed(0),
+    );
     return {
       shouldBuy: true,
       reason: "전략A: BB하단+RSI30상향돌파+거래량",
       strategy: "A",
     };
-  } catch {
+  } catch (e) {
+    logger.error(
+      LOG_SOURCE,
+      "[오류] 전략A 매수 검토 중 예외: %s",
+      (e as Error).message,
+    );
     return null;
   }
 };
@@ -94,6 +107,13 @@ export const checkSellSignalA = (
     buyPrice - entryAtr * STRATEGY_A_ATR_STOP_MULT,
   );
   if (currentPrice <= stopPrice) {
+    logger.info(
+      LOG_SOURCE,
+      "[시그널] %s | 손절 | 현재가 %s <= 손절가 %s",
+      market,
+      currentPrice.toFixed(0),
+      stopPrice.toFixed(0),
+    );
     return {
       shouldSell: true,
       reason: `전략A 손절 (가격 ${currentPrice.toFixed(0)} <= ${stopPrice.toFixed(0)})`,
@@ -105,6 +125,13 @@ export const checkSellSignalA = (
     const prices = pricesFromCandles(candles1m);
     const bb = calculateBollingerBands(prices);
     if (currentPrice >= bb.middle) {
+      logger.info(
+        LOG_SOURCE,
+        "[시그널] %s | 익절 (BB 중앙) | 현재가 %s >= 중앙선 %s",
+        market,
+        currentPrice.toFixed(0),
+        bb.middle.toFixed(0),
+      );
       return {
         shouldSell: true,
         reason: `전략A 익절 (BB 중앙선 터치 ${currentPrice.toFixed(0)} >= ${bb.middle.toFixed(0)})`,

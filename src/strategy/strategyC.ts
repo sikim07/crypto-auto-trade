@@ -12,7 +12,9 @@ import {
 } from "../config";
 import type { BuySignalResult, SellSignalResult } from "./signal";
 import type { BotPosition } from "../types";
+import { logger } from "../logger";
 
+const LOG_SOURCE = "strategyC";
 const pricesFromCandles = (candles: { trade_price: number }[]): number[] =>
   candles.map((c) => c.trade_price);
 const volumesFromCandles = (
@@ -75,12 +77,24 @@ export const checkBuySignalC = (
     );
     if (volRatio < STRATEGY_C_VOLUME_RATIO) return null;
 
+    logger.info(
+      LOG_SOURCE,
+      "[시그널] %s | 매수 조건 충족 | 가격 %s | BB수축+상단돌파+거래량%.0f%%",
+      market,
+      currentPrice.toFixed(0),
+      volRatio * 100,
+    );
     return {
       shouldBuy: true,
       reason: "전략C: BB수축+상단돌파+거래량200%+몸통비",
       strategy: "C",
     };
-  } catch {
+  } catch (e) {
+    logger.error(
+      LOG_SOURCE,
+      "[오류] 전략C 매수 검토 중 예외: %s",
+      (e as Error).message,
+    );
     return null;
   }
 };
@@ -104,6 +118,13 @@ export const checkSellSignalC = (
     const prices = pricesFromCandles(candles1m);
     const bb = calculateBollingerBands(prices);
     if (currentPrice < bb.middle) {
+      logger.info(
+        LOG_SOURCE,
+        "[시그널] %s | 손절 (BB 중앙 하향) | 현재가 %s < 중앙 %s",
+        market,
+        currentPrice.toFixed(0),
+        bb.middle.toFixed(0),
+      );
       return {
         shouldSell: true,
         reason: `전략C 손절 (가격 ${currentPrice.toFixed(0)} < BB중앙 ${bb.middle.toFixed(0)})`,
@@ -115,6 +136,13 @@ export const checkSellSignalC = (
     const threshold =
       position.highestPrice * (1 - STRATEGY_C_TRAILING_OFFSET_PCT / 100);
     if (currentPrice <= threshold) {
+      logger.info(
+        LOG_SOURCE,
+        "[시그널] %s | 익절 트레일링 | 고가 %s 대비 -%s%% 하락",
+        market,
+        position.highestPrice.toFixed(0),
+        STRATEGY_C_TRAILING_OFFSET_PCT,
+      );
       return {
         shouldSell: true,
         reason: `전략C 익절 트레일링 (고가 ${position.highestPrice.toFixed(0)} 대비 -${STRATEGY_C_TRAILING_OFFSET_PCT}%)`,

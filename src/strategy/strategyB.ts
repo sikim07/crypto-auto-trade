@@ -1,9 +1,11 @@
 import { getCandles } from "../data/candleWindow";
 import { calculateRSI, calculateMACD } from "../indicators";
-import { RSI_PERIOD, MACD_FAST, MACD_SLOW, MACD_SIGNAL } from "../config";
+import { RSI_PERIOD, MACD_SLOW, MACD_SIGNAL } from "../config";
 import type { BuySignalResult, SellSignalResult } from "./signal";
 import type { BotPosition } from "../types";
+import { logger } from "../logger";
 
+const LOG_SOURCE = "strategyB";
 const pricesFromCandles = (candles: { trade_price: number }[]): number[] =>
   candles.map((c) => c.trade_price);
 
@@ -85,6 +87,14 @@ export const checkBuySignalB = (
     const threshold = withDivergence ? RSI_40_DIVERGENCE : RSI_50;
     if (rsiPrev >= threshold || rsiCur < threshold) return null;
 
+    logger.info(
+      LOG_SOURCE,
+      "[시그널] %s | 매수 조건 충족 | 가격 %s | 골든크로스+RSI%s상향 %s",
+      market,
+      currentPrice.toFixed(0),
+      String(threshold),
+      withDivergence ? "(다이버전스)" : "",
+    );
     return {
       shouldBuy: true,
       reason: withDivergence
@@ -92,7 +102,12 @@ export const checkBuySignalB = (
         : "전략B: 골든크로스+RSI50상향",
       strategy: "B",
     };
-  } catch {
+  } catch (e) {
+    logger.error(
+      LOG_SOURCE,
+      "[오류] 전략B 매수 검토 중 예외: %s",
+      (e as Error).message,
+    );
     return null;
   }
 };
@@ -114,6 +129,7 @@ export const checkSellSignalB = (
   if (candles1m.length >= minLen) {
     const macd = calculateMACD(prices);
     if (macd.prevMacd >= macd.prevSignal && macd.macd < macd.signal) {
+      logger.info(LOG_SOURCE, "[시그널] %s | 손절 (MACD 데드크로스)", market);
       return {
         shouldSell: true,
         reason: "전략B 손절 (MACD 데드크로스)",
@@ -125,6 +141,13 @@ export const checkSellSignalB = (
   const prevRsi = position.lastRsi ?? 0;
   if (typeof rsiCur === "number") {
     if (prevRsi >= RSI_70 && rsiCur < RSI_70) {
+      logger.info(
+        LOG_SOURCE,
+        "[시그널] %s | 익절 (RSI 70 하향 돌파) %s → %s",
+        market,
+        prevRsi.toFixed(1),
+        rsiCur.toFixed(1),
+      );
       return {
         shouldSell: true,
         reason: `전략B 익절 (RSI 70 하향 돌파 ${prevRsi.toFixed(1)} → ${rsiCur.toFixed(1)})`,
