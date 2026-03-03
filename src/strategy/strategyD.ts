@@ -84,11 +84,11 @@ export const checkBuySignalD = (
     const displacement = currentPrice / ma20_1m;
     logger.info(
       LOG_SOURCE,
-      "[시그널] %s | 매수 조건 충족 | 가격 %s | MA20_1m %s | 이격도 %.2f",
+      "[시그널] %s | 매수 조건 충족 | 가격 %s | MA20_1m %s | 이격도 %s",
       market,
       currentPrice.toFixed(0),
       ma20_1m.toFixed(0),
-      displacement,
+      displacement.toFixed(4),
     );
     return {
       shouldBuy: true,
