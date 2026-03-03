@@ -8,6 +8,8 @@ import {
   STRATEGY_C_BODY_RATIO_MIN,
   STRATEGY_C_TRAILING_ACTIVATE_PCT,
   STRATEGY_C_TRAILING_OFFSET_PCT,
+  STRATEGY_C_STOP_LOSS_PCT,
+  STRATEGY_C_MAX_HOLD_MINUTES,
   COST_PCT,
 } from "../config";
 import type { BuySignalResult, SellSignalResult } from "./signal";
@@ -105,7 +107,7 @@ const getNetProfitPct = (buyPrice: number, currentPrice: number): number => {
   return raw - COST_PCT;
 };
 
-/** 전략 C 매도: 3% 도달 후 트레일링 -1.5%, 손절 BB 중앙선 하향 */
+/** 전략 C 매도: 고정 손절 → 최대 보유 → BB 중앙선(마감 봉 기준) → 2% 도달 후 트레일링 -1.5% */
 export const checkSellSignalC = (
   market: string,
   position: BotPosition,
@@ -113,14 +115,48 @@ export const checkSellSignalC = (
 ): SellSignalResult => {
   const netPct = getNetProfitPct(position.buyPrice, currentPrice);
 
+  if (netPct <= STRATEGY_C_STOP_LOSS_PCT) {
+    logger.info(
+      LOG_SOURCE,
+      "[시그널] %s | 손절 (순수익 %s%)",
+      market,
+      netPct.toFixed(2),
+    );
+    return {
+      shouldSell: true,
+      reason: `전략C 손절 (순수익 ${netPct.toFixed(2)}%)`,
+    };
+  }
+
+  const holdMin = (Date.now() - position.buyTime) / 60_000;
+  if (holdMin >= STRATEGY_C_MAX_HOLD_MINUTES) {
+    logger.info(
+      LOG_SOURCE,
+      "[시그널] %s | 최대 보유시간 초과 (%s분, 순수익 %s%)",
+      market,
+      holdMin.toFixed(0),
+      netPct.toFixed(2),
+    );
+    return {
+      shouldSell: true,
+      reason: `전략C 최대 보유시간 초과 (${holdMin.toFixed(0)}분, 순수익 ${netPct.toFixed(2)}%)`,
+    };
+  }
+
   const candles1m = getCandles(market, 1);
-  if (candles1m.length >= BB_PERIOD) {
-    const prices = pricesFromCandles(candles1m);
-    const bb = calculateBollingerBands(prices);
+  const volumes1m = volumesFromCandles(candles1m);
+  const isCurrentCandleOpen =
+    volumes1m.length > 1 && volumes1m[volumes1m.length - 1] === 0;
+  const closedCandles = isCurrentCandleOpen
+    ? candles1m.slice(0, -1)
+    : candles1m;
+  if (closedCandles.length >= BB_PERIOD) {
+    const closedPrices = closedCandles.map((c) => c.trade_price);
+    const bb = calculateBollingerBands(closedPrices.slice(-BB_PERIOD));
     if (currentPrice < bb.middle) {
       logger.info(
         LOG_SOURCE,
-        "[시그널] %s | 손절 (BB 중앙 하향) | 현재가 %s < 중앙 %s",
+        "[시그널] %s | 손절 (BB 중앙 하향, 마감봉 기준) | 현재가 %s < 중앙 %s",
         market,
         currentPrice.toFixed(0),
         bb.middle.toFixed(0),

@@ -88,13 +88,15 @@ export const STRATEGY_A_RSI_OVERSOLD = 30;
 export const STRATEGY_A_VOLUME_AVG_PERIOD = 5;
 export const STRATEGY_A_ATR_STOP_MULT = 1.5;
 
-/** 전략 C: 변동성 스퀴즈 — BB 폭 수축 상한, 거래량 비율, 몸통 비율, 트레일링 */
+/** 전략 C: 변동성 스퀴즈 — BB 폭 수축 상한, 거래량 비율, 몸통 비율, 트레일링, 손절, 최대 보유 */
 export const STRATEGY_C_BB_SQUEEZE_RATIO = 0.02;
 export const STRATEGY_C_VOLUME_RATIO = 2;
 export const STRATEGY_C_VOLUME_AVG_PERIOD = 10;
 export const STRATEGY_C_BODY_RATIO_MIN = 0.6;
-export const STRATEGY_C_TRAILING_ACTIVATE_PCT = 3;
+export const STRATEGY_C_TRAILING_ACTIVATE_PCT = 2;
 export const STRATEGY_C_TRAILING_OFFSET_PCT = 1.5;
+export const STRATEGY_C_STOP_LOSS_PCT = -1.5;
+export const STRATEGY_C_MAX_HOLD_MINUTES = 20;
 
 /** 전략 D: 순추세 모멘텀 — RSI 상향 돌파, 이격도, MA 기간, 손절 */
 export const STRATEGY_D_RSI_CROSS = 60;
