@@ -42,6 +42,7 @@ let isSelling = false;
 
 let dailyLossPct = 0;
 let dailyTradeCount = 0;
+let dailyProfitKrw = 0;
 let lastResetDate = new Date().toDateString();
 let dailyLimitLogged = false;
 
@@ -53,6 +54,7 @@ const resetDailyLossIfNewDay = (): void => {
   if (today !== lastResetDate) {
     dailyLossPct = 0;
     dailyTradeCount = 0;
+    dailyProfitKrw = 0;
     dailyLimitLogged = false;
     lastResetDate = today;
     logger.info(LOG_SOURCE, "일일 카운터 초기화 (새 날짜: %s)", today);
@@ -123,7 +125,7 @@ const run = async (): Promise<void> => {
           const holdMin = (Date.now() - position.buyTime) / 60_000;
           logger.info(
             LOG_SOURCE,
-            "[포지션] %s | 매수가 %s | 현재가 %s | 순수익 %s%% | 최대 %s%% | 보유 %s분",
+            "[포지션] %s | 매수가 %s | 현재가 %s | 순수익 %s% | 최대 %s% | 보유 %s분",
             position.market,
             position.buyPrice.toFixed(0),
             curPrice.toFixed(0),
@@ -133,11 +135,16 @@ const run = async (): Promise<void> => {
           );
         }
       } else {
+        const dailyProfitStr =
+          dailyProfitKrw >= 0
+            ? `+${Math.round(dailyProfitKrw).toLocaleString()}원`
+            : `${Math.round(dailyProfitKrw).toLocaleString()}원`;
         logger.info(
           LOG_SOURCE,
-          "[대기] 관심종목 %s | 일일 누적 %s%% (%s회 매매)",
+          "[대기] 관심종목 %s | 일일 누적 %s% %s (%s회 매매)",
           currentMarkets.join(", "),
           dailyLossPct.toFixed(2),
+          dailyProfitStr,
           String(dailyTradeCount),
         );
       }
@@ -255,16 +262,30 @@ const run = async (): Promise<void> => {
             );
             if (res.ok) {
               const finalNetPct = getNetProfitPct(position.buyPrice, price);
+              const tradeProfitKrw =
+                (finalNetPct / 100) *
+                (position.buyPrice * parseFloat(position.volume));
               dailyLossPct += finalNetPct;
+              dailyProfitKrw += tradeProfitKrw;
               dailyTradeCount += 1;
+              const tradeProfitStr =
+                tradeProfitKrw >= 0
+                  ? `+${Math.round(tradeProfitKrw).toLocaleString()}원`
+                  : `${Math.round(tradeProfitKrw).toLocaleString()}원`;
+              const dailyProfitStr =
+                dailyProfitKrw >= 0
+                  ? `+${Math.round(dailyProfitKrw).toLocaleString()}원`
+                  : `${Math.round(dailyProfitKrw).toLocaleString()}원`;
               logger.info(
                 LOG_SOURCE,
-                "[매도] [전략%s] 체결: %s 수량 %s | 순수익 %s%% | 일일 누적 %s%% | 오늘 %s회차",
+                "[매도] [전략%s] 체결: %s 수량 %s | 순수익 %s% %s | 일일 누적 %s% %s | 오늘 %s회차",
                 strategyTag,
                 position.market,
                 position.volume,
                 finalNetPct.toFixed(2),
+                tradeProfitStr,
                 dailyLossPct.toFixed(2),
+                dailyProfitStr,
                 String(dailyTradeCount),
               );
               position = null;
@@ -319,7 +340,7 @@ const run = async (): Promise<void> => {
         if (!dailyLimitLogged) {
           logger.warn(
             LOG_SOURCE,
-            "일일 최대 손실 한도 도달 (누적 %s%%), 매수 중단",
+            "일일 최대 손실 한도 도달 (누적 %s%), 매수 중단",
             dailyLossPct.toFixed(2),
           );
           dailyLimitLogged = true;
