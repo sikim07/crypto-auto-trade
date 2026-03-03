@@ -151,7 +151,11 @@ const run = async (): Promise<void> => {
         if (next.length > 0) {
           currentMarkets = next;
           lastSelectTime = Date.now();
-          subscribeTicker(currentMarkets, handleTicker);
+          subscribeTicker(
+            currentMarkets,
+            handleTicker,
+            "매수 대기 시간 초과로 인한 종목 재선정(재연결)",
+          );
           logger.info(
             LOG_SOURCE,
             "매수 없음 주기 경과, 종목 재선정: %s",
@@ -281,7 +285,11 @@ const run = async (): Promise<void> => {
                 process.exit(1);
               }
               lastSelectTime = Date.now();
-              subscribeTicker(currentMarkets, handleTicker);
+              subscribeTicker(
+                currentMarkets,
+                handleTicker,
+                "매도 체결로 인한 종목 재선정(재연결)",
+              );
             } else {
               logger.error(
                 LOG_SOURCE,
@@ -403,8 +411,12 @@ const run = async (): Promise<void> => {
             trailingActivated: strategy === "C" ? false : undefined,
           };
           currentMarkets = [market];
-          unsubscribeTicker();
-          subscribeTicker([market], handleTicker);
+          unsubscribeTicker("매수 체결로 인한 종목 구독 해제");
+          subscribeTicker(
+            [market],
+            handleTicker,
+            "매수 체결로 매수 종목만 티커 구독(재연결)",
+          );
         } else {
           logger.error(
             LOG_SOURCE,

@@ -25,15 +25,19 @@ const resetWatchdog = (): void => {
   if (watchdogTimer) clearTimeout(watchdogTimer);
   watchdogTimer = setTimeout(() => {
     logger.warn(LOG_SOURCE, "무응답 감지, WebSocket 재연결");
-    connect(subscribedMarkets, onTicker!);
+    connect(subscribedMarkets, onTicker!, "무응답 감지로 Socket 재연결");
   }, WATCHDOG_TIMEOUT_MS);
 };
 
-const connect = (markets: string[], callback: TickerCallback): void => {
+const connect = (
+  markets: string[],
+  callback: TickerCallback,
+  reasonForClosingExisting?: string,
+): void => {
   if (ws) {
     logger.info(LOG_SOURCE, "기존 WebSocket 연결 종료 후 재연결");
     try {
-      ws.close();
+      ws.close(1000, reasonForClosingExisting ?? "재연결");
     } catch {
       /* ignore */
     }
@@ -91,24 +95,25 @@ const connect = (markets: string[], callback: TickerCallback): void => {
   });
 };
 
-/** 구독 시작 (기존 연결 있으면 재연결) */
+/** 구독 시작 (기존 연결 있으면 재연결). reasonForReconnect는 기존 연결 종료 시 close reason으로 사용 */
 export const subscribeTicker = (
   markets: string[],
   callback: TickerCallback,
+  reasonForReconnect?: string,
 ): void => {
   if (markets.length === 0) return;
-  connect(markets, callback);
+  connect(markets, callback, reasonForReconnect);
 };
 
-/** 구독 해제 */
-export const unsubscribeTicker = (): void => {
+/** 구독 해제. reason은 close 시 로그용 */
+export const unsubscribeTicker = (reason?: string): void => {
   if (watchdogTimer) {
     clearTimeout(watchdogTimer);
     watchdogTimer = null;
   }
   if (ws) {
     try {
-      ws.close();
+      ws.close(1000, reason ?? "구독 해제");
     } catch {
       /* ignore */
     }
