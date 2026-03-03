@@ -1,12 +1,13 @@
 import { getAllMarkets, getTicker } from "../api/rest";
 import { TARGET_MARKET_COUNT } from "../config";
-import type { UpbitTicker } from "../types";
 import { logger } from "../logger";
 
 const LOG_SOURCE = "selectMarkets";
 
+const SELECT_TOP_BY_TRADE_PRICE = 50;
+
 /**
- * KRW 마켓 중 거래대금 상위권에서 하락 변동성 높은 2종목 선정
+ * KRW 마켓 중 거래대금 상위권에서 변동성(절대 등락률) 상위 N종목 선정
  */
 export const selectTopMarkets = async (): Promise<string[]> => {
   const markets = await getAllMarkets();
@@ -26,54 +27,23 @@ export const selectTopMarkets = async (): Promise<string[]> => {
   const byTradePrice = [...tickers].sort(
     (a, b) => (b.acc_trade_price_24h ?? 0) - (a.acc_trade_price_24h ?? 0),
   );
-  const topCount = Math.min(50, byTradePrice.length);
+  const topCount = Math.min(SELECT_TOP_BY_TRADE_PRICE, byTradePrice.length);
   const top = byTradePrice.slice(0, topCount);
 
-  logger.debug(
-    LOG_SOURCE,
-    "거래대금 상위 %s개 중 하락 종목 탐색",
-    String(topCount),
-  );
-
-  const dropping = top
-    .filter((t) => (t.signed_change_rate ?? 0) < 0)
+  const byVolatility = top
     .map((t) => ({
       market: t.market,
-      changeRate: t.signed_change_rate ?? 0,
-    }))
-    .sort((a, b) => a.changeRate - b.changeRate);
-
-  if (dropping.length >= TARGET_MARKET_COUNT) {
-    const selected = dropping.slice(0, TARGET_MARKET_COUNT);
-    logger.info(
-      LOG_SOURCE,
-      "하락 종목 선정: %s (하락 %s개 중)",
-      selected
-        .map((x) => `${x.market}(${(x.changeRate * 100).toFixed(2)}%)`)
-        .join(", "),
-      String(dropping.length),
-    );
-    return selected.map((x) => x.market).filter(Boolean);
-  }
-
-  logger.info(
-    LOG_SOURCE,
-    "하락 종목 부족 (%s개), 변동률 절대값 기준 폴백",
-    String(dropping.length),
-  );
-
-  const byAbsChange = top
-    .map((t) => ({
-      market: t.market,
-      vol: Math.abs(t.signed_change_rate ?? 0),
+      absRate: Math.abs(t.signed_change_rate ?? 0),
       rate: t.signed_change_rate ?? 0,
     }))
-    .sort((a, b) => b.vol - a.vol);
+    .sort((a, b) => b.absRate - a.absRate);
 
-  const selected = byAbsChange.slice(0, TARGET_MARKET_COUNT);
+  const selected = byVolatility.slice(0, TARGET_MARKET_COUNT);
   logger.info(
     LOG_SOURCE,
-    "폴백 선정: %s",
+    "거래대금 상위 %s개 중 변동성 상위 %s개 선정: %s",
+    String(topCount),
+    String(TARGET_MARKET_COUNT),
     selected
       .map((x) => `${x.market}(${(x.rate * 100).toFixed(2)}%)`)
       .join(", "),

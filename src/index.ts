@@ -8,6 +8,8 @@ import { checkBuySignalB } from "./strategy/strategyB";
 import { checkBuySignalA, checkSellSignalA } from "./strategy/strategyA";
 import { checkSellSignalB } from "./strategy/strategyB";
 import { checkBuySignalC, checkSellSignalC } from "./strategy/strategyC";
+import { checkBuySignalD, checkSellSignalD } from "./strategy/strategyD";
+import { checkBuySignalE, checkSellSignalE } from "./strategy/strategyE";
 import {
   executeMarketBuy,
   executeMarketSell,
@@ -218,6 +220,10 @@ const run = async (): Promise<void> => {
           }
         } else if (position.strategy === "C") {
           sellSignal = checkSellSignalC(position.market, position, price);
+        } else if (position.strategy === "D") {
+          sellSignal = checkSellSignalD(position.market, position, price);
+        } else if (position.strategy === "E") {
+          sellSignal = checkSellSignalE(position.market, position, price);
         } else {
           sellSignal = checkSellSignal(
             position.market,
@@ -319,7 +325,15 @@ const run = async (): Promise<void> => {
         buyB?.shouldBuy || buyA?.shouldBuy
           ? null
           : checkBuySignalC(market, price);
-      const buySignal = buyB ?? buyA ?? buyC;
+      const buyD =
+        buyB?.shouldBuy || buyA?.shouldBuy || buyC?.shouldBuy
+          ? null
+          : checkBuySignalD(market, price);
+      const buyE =
+        buyB?.shouldBuy || buyA?.shouldBuy || buyC?.shouldBuy || buyD?.shouldBuy
+          ? null
+          : checkBuySignalE(market, price);
+      const buySignal = buyB ?? buyA ?? buyC ?? buyD ?? buyE;
       if (!buySignal?.shouldBuy) return;
       isBuying = true;
       const strategy = buySignal.strategy ?? undefined;

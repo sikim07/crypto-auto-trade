@@ -95,3 +95,20 @@ export const STRATEGY_C_VOLUME_AVG_PERIOD = 10;
 export const STRATEGY_C_BODY_RATIO_MIN = 0.6;
 export const STRATEGY_C_TRAILING_ACTIVATE_PCT = 3;
 export const STRATEGY_C_TRAILING_OFFSET_PCT = 1.5;
+
+/** 전략 D: 순추세 모멘텀 — RSI 상향 돌파, 이격도, MA 기간, 손절 */
+export const STRATEGY_D_RSI_CROSS = 60;
+export const STRATEGY_D_VOLUME_RATIO = 1.5;
+export const STRATEGY_D_VOLUME_AVG_PERIOD = 5;
+export const STRATEGY_D_DISPLACEMENT_MAX = 1.02;
+export const STRATEGY_D_MA_PERIODS = [5, 10, 20] as const;
+export const STRATEGY_D_STOP_LOSS_PCT = -1.5;
+
+/** 전략 E: 박스권 — BB 폭, 수평 기울기, RSI, 거래량 제외, 손절 */
+export const STRATEGY_E_BB_WIDTH_LOOKBACK = 100;
+export const STRATEGY_E_SLOPE_THRESHOLD_RATIO = 0.0002;
+export const STRATEGY_E_BB_SLOPE_LOOKBACK = 20;
+export const STRATEGY_E_RSI_OVERSOLD = 40;
+export const STRATEGY_E_VOLUME_AVG_PERIOD = 5;
+export const STRATEGY_E_VOLUME_EXCLUDE_RATIO = 2;
+export const STRATEGY_E_STOP_BELOW_LOWER_RATIO = 0.99;

@@ -33,6 +33,25 @@ export const calculateSMA = (data: number[], period: number): number => {
   return sum(data.slice(-period)) / period;
 };
 
+/** 선형 회귀 기울기 (x = 인덱스 0..n-1, y = values). 길이 < 2 시 0 반환 */
+export const linearRegressionSlope = (values: number[]): number => {
+  if (values.length < 2) return 0;
+  const n = values.length;
+  let sumX = 0;
+  let sumY = 0;
+  let sumXY = 0;
+  let sumXX = 0;
+  for (let i = 0; i < n; i++) {
+    sumX += i;
+    sumY += values[i];
+    sumXY += i * values[i];
+    sumXX += i * i;
+  }
+  const denom = n * sumXX - sumX * sumX;
+  if (denom === 0) return 0;
+  return (n * sumXY - sumX * sumY) / denom;
+};
+
 export const calculateStdDev = (data: number[], mean?: number): number => {
   const m = mean ?? sum(data) / data.length;
   const sq = data.map((x) => (x - m) ** 2);
