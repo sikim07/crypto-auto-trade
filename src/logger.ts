@@ -13,7 +13,19 @@ const currentLevel: number =
   LOG_LEVELS[(process.env.LOG_LEVEL ?? "INFO").toUpperCase()] ??
   LOG_LEVELS.INFO;
 
-const timestamp = (): string => new Date().toISOString();
+const KST = "Asia/Seoul";
+
+/** 한국시간(KST) 기준 타임스탬프: YYYY-MM-DD HH:mm:ss.SSS */
+const timestamp = (): string => {
+  const d = new Date();
+  const datePart = d.toLocaleDateString("en-CA", { timeZone: KST });
+  const timePart = d.toLocaleTimeString("en-GB", {
+    timeZone: KST,
+    hour12: false,
+  });
+  const ms = String(d.getUTCMilliseconds()).padStart(3, "0");
+  return `${datePart} ${timePart}.${ms}`;
+};
 
 const format = (
   level: string,
