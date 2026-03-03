@@ -4,6 +4,7 @@
 
 /** 캔들/데이터 */
 export const CANDLE_WINDOW_SIZE = 200;
+export const CANDLE_WINDOW_SIZE_5M = 250;
 export const CANDLE_UNIT_MINUTES = 1;
 
 /** REST API */
@@ -22,9 +23,12 @@ export const RE_SELECT_AFTER_NO_BUY_MINUTES = 60;
 export const CANDLE_REFRESH_INTERVAL_MS = 60 * 1000;
 
 /** 주문/잔고 */
+/** @deprecated 매수 금액은 POSITION_PCT 기준으로 계산. 참고용 유지 */
 export const BALANCE_USAGE_RATIO = 0.999;
 export const MIN_RESERVE_KRW = 10000;
 export const MIN_ORDER_KRW = 5000;
+/** 매수 시 사용할 잔고 비율 (사용 가능 금액의 N%) */
+export const POSITION_PCT = 0.03;
 
 /** 수수료 (업비트 KRW 마켓 기본 0.05%, 쿠폰 미적용 시 0.25%) */
 export const FEE_BUY_PCT = 0.05;
@@ -52,6 +56,7 @@ export const CONFIRM_RETRY_INTERVAL_MS = 300;
 export const BB_PERIOD = 20;
 export const BB_STD_MULT = 2;
 export const RSI_PERIOD = 14;
+export const ATR_PERIOD = 14;
 export const MACD_FAST = 12;
 export const MACD_SLOW = 26;
 export const MACD_SIGNAL = 9;
@@ -77,3 +82,16 @@ export const TRAILING_STOP_OFFSET_PCT = 0.5;
 
 /** 일일 최대 누적 손실(%) — 초과 시 당일 매매 중단 */
 export const DAILY_MAX_LOSS_PCT = -5;
+
+/** 전략 A: 저점 정밀 타격 — RSI 과매도 기준, 거래량 평균 봉 수 */
+export const STRATEGY_A_RSI_OVERSOLD = 30;
+export const STRATEGY_A_VOLUME_AVG_PERIOD = 5;
+export const STRATEGY_A_ATR_STOP_MULT = 1.5;
+
+/** 전략 C: 변동성 스퀴즈 — BB 폭 수축 상한, 거래량 비율, 몸통 비율, 트레일링 */
+export const STRATEGY_C_BB_SQUEEZE_RATIO = 0.02;
+export const STRATEGY_C_VOLUME_RATIO = 2;
+export const STRATEGY_C_VOLUME_AVG_PERIOD = 10;
+export const STRATEGY_C_BODY_RATIO_MIN = 0.6;
+export const STRATEGY_C_TRAILING_ACTIVATE_PCT = 3;
+export const STRATEGY_C_TRAILING_OFFSET_PCT = 1.5;

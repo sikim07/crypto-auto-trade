@@ -2,6 +2,7 @@ import {
   BB_PERIOD,
   BB_STD_MULT,
   RSI_PERIOD,
+  ATR_PERIOD,
   MACD_FAST,
   MACD_SLOW,
   MACD_SIGNAL,
@@ -143,6 +144,38 @@ export const calculateMACD = (
     prevSignal: signalLine[signalLine.length - 2],
     prevHistogram: histogram[len - 2],
   };
+};
+
+/** ATR (Wilder): True Range 기반, 가장 최근 1개 값 반환 */
+export const calculateATR = (
+  highs: number[],
+  lows: number[],
+  closes: number[],
+  period: number = ATR_PERIOD,
+): number => {
+  if (
+    highs.length < period + 1 ||
+    lows.length < period + 1 ||
+    closes.length < period + 1
+  )
+    throw new Error(`ATR: need ${period + 1}, got ${highs.length}`);
+  const tr: number[] = [];
+  for (let i = 0; i < highs.length; i++) {
+    const high = highs[i];
+    const low = lows[i];
+    const prevClose = i > 0 ? closes[i - 1] : closes[0];
+    const trVal = Math.max(
+      high - low,
+      Math.abs(high - prevClose),
+      Math.abs(low - prevClose),
+    );
+    tr.push(trVal);
+  }
+  let atr = sum(tr.slice(0, period)) / period;
+  for (let i = period; i < tr.length; i++) {
+    atr = (atr * (period - 1) + tr[i]) / period;
+  }
+  return atr;
 };
 
 /** 직전 N개 거래량 평균 대비 현재 거래량 비율 */

@@ -95,3 +95,18 @@ export interface UpbitOrderDetail extends UpbitOrder {
     created_at: string;
   }[];
 }
+
+/** 봇 포지션 (전략별 매도용 공통 타입) */
+export interface BotPosition {
+  market: string;
+  buyPrice: number;
+  volume: string;
+  buyTime: number;
+  maxNetPct: number;
+  strategy?: "A" | "B" | "C";
+  entryLow?: number;
+  entryAtr?: number;
+  highestPrice?: number;
+  trailingActivated?: boolean;
+  lastRsi?: number;
+}

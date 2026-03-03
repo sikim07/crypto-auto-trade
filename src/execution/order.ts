@@ -1,7 +1,7 @@
 import {
-  BALANCE_USAGE_RATIO,
   MIN_RESERVE_KRW,
   MIN_ORDER_KRW,
+  POSITION_PCT,
   ORDER_WAIT_MS,
   CONFIRM_RETRY_MAX,
   CONFIRM_RETRY_INTERVAL_MS,
@@ -13,13 +13,10 @@ import {
 } from "../api/rest";
 import type { UpbitAccount, UpbitOrderDetail } from "../types";
 
-/** 사용 가능 매수 금액: 잔고*비율, 최소 예수금 유지. 5천원 미만이면 0 반환 */
+/** 사용 가능 매수 금액: (잔고 - 예비금) * POSITION_PCT. 5천원 미만이면 0 반환 */
 export const getBuyAmountKrw = (krwBalance: number): number => {
-  const use = Math.min(
-    krwBalance * BALANCE_USAGE_RATIO,
-    Math.max(0, krwBalance - MIN_RESERVE_KRW),
-  );
-  const amount = Math.floor(use);
+  if (krwBalance <= MIN_RESERVE_KRW) return 0;
+  const amount = Math.floor((krwBalance - MIN_RESERVE_KRW) * POSITION_PCT);
   if (amount < MIN_ORDER_KRW) return 0;
   return amount;
 };

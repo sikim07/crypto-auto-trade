@@ -3,22 +3,26 @@ import { getCandles as fetchCandles } from "./api/rest";
 import { setCandles, getCandles, updateFromTicker } from "./data/candleWindow";
 import { subscribeTicker, unsubscribeTicker } from "./ws/ticker";
 import { selectTopMarkets } from "./strategy/selectMarkets";
-import {
-  checkBuySignal,
-  checkSellSignal,
-  getNetProfitPct,
-} from "./strategy/signal";
+import { checkSellSignal, getNetProfitPct } from "./strategy/signal";
+import { checkBuySignalB } from "./strategy/strategyB";
+import { checkBuySignalA, checkSellSignalA } from "./strategy/strategyA";
+import { checkSellSignalB } from "./strategy/strategyB";
+import { checkBuySignalC, checkSellSignalC } from "./strategy/strategyC";
 import {
   executeMarketBuy,
   executeMarketSell,
   fetchVolume,
   fetchAvgBuyPrice,
 } from "./execution/order";
+import { calculateATR } from "./indicators";
 import {
   CANDLE_WINDOW_SIZE,
+  CANDLE_WINDOW_SIZE_5M,
   CANDLE_REFRESH_INTERVAL_MS,
   RE_SELECT_AFTER_NO_BUY_MINUTES,
   DAILY_MAX_LOSS_PCT,
+  STRATEGY_A_ATR_STOP_MULT,
+  STRATEGY_C_TRAILING_ACTIVATE_PCT,
 } from "./config";
 import { logger } from "./logger";
 
@@ -26,13 +30,8 @@ const LOG_SOURCE = "index";
 const ACCESS_KEY = process.env.ACCESS_KEY!;
 const SECRET_KEY = process.env.SECRET_KEY!;
 
-interface Position {
-  market: string;
-  buyPrice: number;
-  volume: string;
-  buyTime: number;
-  maxNetPct: number;
-}
+import type { BotPosition } from "./types";
+type Position = BotPosition;
 
 let position: Position | null = null;
 let currentMarkets: string[] = [];
@@ -78,12 +77,12 @@ const run = async (): Promise<void> => {
     }
     logger.info(LOG_SOURCE, "종목 선정: %s", markets.join(", "));
     for (const market of markets) {
-      const candles = await fetchCandles(
-        market,
-        CANDLE_WINDOW_SIZE,
-        "minutes1",
-      );
-      setCandles(market, candles);
+      const [candles1m, candles5m] = await Promise.all([
+        fetchCandles(market, CANDLE_WINDOW_SIZE, "minutes1"),
+        fetchCandles(market, CANDLE_WINDOW_SIZE_5M, "minutes5"),
+      ]);
+      setCandles(market, candles1m, 1);
+      setCandles(market, candles5m, 5);
     }
     return markets;
   };
@@ -104,7 +103,7 @@ const run = async (): Promise<void> => {
             CANDLE_WINDOW_SIZE,
             "minutes1",
           );
-          setCandles(market, candles);
+          setCandles(market, candles, 1);
         } catch (e) {
           logger.warn(
             LOG_SOURCE,
@@ -170,147 +169,252 @@ const run = async (): Promise<void> => {
     trade_timestamp: number;
     trade_volume?: number;
   }): Promise<void> => {
-    const market = (data.market ?? data.code) as string;
-    if (!market) return;
-    updateFromTicker(
-      market,
-      data.trade_price,
-      data.trade_timestamp,
-      data.trade_volume,
-    );
-    const price = data.trade_price;
-
-    resetDailyLossIfNewDay();
-    lastPrices[market] = price;
-
-    if (position) {
-      if (position.market !== market) return;
-      if (isSelling) return;
-
-      const curNetPct = getNetProfitPct(position.buyPrice, price);
-      if (curNetPct > position.maxNetPct) {
-        position.maxNetPct = curNetPct;
-      }
-
-      const sellSignal = checkSellSignal(
-        position.market,
-        position.buyPrice,
-        price,
-        { buyTime: position.buyTime, maxNetPct: position.maxNetPct },
+    try {
+      const market = (data.market ?? data.code) as string;
+      if (!market) return;
+      updateFromTicker(
+        market,
+        data.trade_price,
+        data.trade_timestamp,
+        data.trade_volume,
       );
-      if (sellSignal.shouldSell) {
-        isSelling = true;
-        try {
-          logger.info(LOG_SOURCE, "매도 신호: %s", sellSignal.reason);
-          const res = await executeMarketSell(
-            ACCESS_KEY,
-            SECRET_KEY,
+      const price = data.trade_price;
+
+      resetDailyLossIfNewDay();
+      lastPrices[market] = price;
+
+      if (position) {
+        if (position.market !== market) return;
+        if (isSelling) return;
+
+        const curNetPct = getNetProfitPct(position.buyPrice, price);
+        if (curNetPct > position.maxNetPct) {
+          position.maxNetPct = curNetPct;
+        }
+
+        if (position.strategy === "C") {
+          if (curNetPct >= STRATEGY_C_TRAILING_ACTIVATE_PCT) {
+            position.trailingActivated = true;
+            if (
+              position.highestPrice == null ||
+              price > position.highestPrice
+            ) {
+              position.highestPrice = price;
+            }
+          }
+        }
+
+        let sellSignal: {
+          shouldSell: boolean;
+          reason?: string;
+          lastRsi?: number;
+        };
+        if (position.strategy === "A") {
+          sellSignal = checkSellSignalA(position.market, position, price);
+        } else if (position.strategy === "B") {
+          sellSignal = checkSellSignalB(position.market, position, price);
+          if (typeof sellSignal.lastRsi === "number") {
+            position.lastRsi = sellSignal.lastRsi;
+          }
+        } else if (position.strategy === "C") {
+          sellSignal = checkSellSignalC(position.market, position, price);
+        } else {
+          sellSignal = checkSellSignal(
             position.market,
-            position.volume,
+            position.buyPrice,
+            price,
+            { buyTime: position.buyTime, maxNetPct: position.maxNetPct },
           );
-          if (res.ok) {
-            const finalNetPct = getNetProfitPct(position.buyPrice, price);
-            dailyLossPct += finalNetPct;
-            dailyTradeCount += 1;
+        }
+
+        if (sellSignal.shouldSell) {
+          isSelling = true;
+          const strategyTag = position.strategy ?? "legacy";
+          try {
             logger.info(
               LOG_SOURCE,
-              "매도 체결: %s %s (순수익 %s%%, 일일 누적 %s%%, 오늘 %s번째 매매)",
+              "[매도] [전략%s] 신호: %s",
+              strategyTag,
+              sellSignal.reason,
+            );
+            const res = await executeMarketSell(
+              ACCESS_KEY,
+              SECRET_KEY,
               position.market,
               position.volume,
-              finalNetPct.toFixed(2),
-              dailyLossPct.toFixed(2),
-              String(dailyTradeCount),
             );
-            position = null;
-            currentMarkets = await selectAndLoad();
-            if (currentMarkets.length === 0) {
-              logger.warn(
+            if (res.ok) {
+              const finalNetPct = getNetProfitPct(position.buyPrice, price);
+              dailyLossPct += finalNetPct;
+              dailyTradeCount += 1;
+              logger.info(
                 LOG_SOURCE,
-                "매도 후 종목 선정 없음, 30초 후 재시도...",
+                "[매도] [전략%s] 체결: %s 수량 %s | 순수익 %s%% | 일일 누적 %s%% | 오늘 %s회차",
+                strategyTag,
+                position.market,
+                position.volume,
+                finalNetPct.toFixed(2),
+                dailyLossPct.toFixed(2),
+                String(dailyTradeCount),
               );
-              await sleep(30000);
+              position = null;
               currentMarkets = await selectAndLoad();
-            }
-            if (currentMarkets.length === 0) {
+              if (currentMarkets.length === 0) {
+                logger.warn(
+                  LOG_SOURCE,
+                  "매도 후 종목 선정 없음, 30초 후 재시도...",
+                );
+                await sleep(30000);
+                currentMarkets = await selectAndLoad();
+              }
+              if (currentMarkets.length === 0) {
+                logger.error(
+                  LOG_SOURCE,
+                  "치명적: 재시도 후에도 종목 선정 실패. 프로세스 종료.",
+                );
+                process.exit(1);
+              }
+              lastSelectTime = Date.now();
+              subscribeTicker(currentMarkets, handleTicker);
+            } else {
               logger.error(
                 LOG_SOURCE,
-                "치명적: 재시도 후에도 종목 선정 실패. 프로세스 종료.",
+                "[매도] [전략%s] 실패: %s",
+                strategyTag,
+                res.message,
               );
-              process.exit(1);
             }
-            lastSelectTime = Date.now();
-            subscribeTicker(currentMarkets, handleTicker);
-          } else {
-            logger.error(LOG_SOURCE, "매도 실패: %s", res.message);
-          }
-        } finally {
-          isSelling = false;
-        }
-      }
-      return;
-    }
-
-    if (!currentMarkets.includes(market)) return;
-    if (isBuying) return;
-
-    if (dailyLossPct <= DAILY_MAX_LOSS_PCT) {
-      if (!dailyLimitLogged) {
-        logger.warn(
-          LOG_SOURCE,
-          "일일 최대 손실 한도 도달 (누적 %s%%), 매수 중단",
-          dailyLossPct.toFixed(2),
-        );
-        dailyLimitLogged = true;
-      }
-      return;
-    }
-
-    const buySignal = checkBuySignal(market, price);
-    if (!buySignal.shouldBuy) return;
-    isBuying = true;
-    try {
-      logger.info(LOG_SOURCE, "매수 신호: %s", buySignal.reason);
-      const res = await executeMarketBuy(ACCESS_KEY, SECRET_KEY, market);
-      if (res.ok && res.order) {
-        let vol = await fetchVolume(ACCESS_KEY, SECRET_KEY, market);
-        if (parseFloat(vol) <= 0) {
-          await sleep(300);
-          vol = await fetchVolume(ACCESS_KEY, SECRET_KEY, market);
-          if (parseFloat(vol) <= 0) {
-            logger.warn(
+          } catch (e) {
+            logger.error(
               LOG_SOURCE,
-              "매수 체결 후 보유 수량 0 - 계정 반영 지연. 수량 재조회 실패.",
+              "[매도] [전략%s] 실행 중 오류: %s",
+              strategyTag,
+              (e as Error).message,
             );
+          } finally {
+            isSelling = false;
           }
         }
-        const avgBuyPrice = await fetchAvgBuyPrice(
-          ACCESS_KEY,
-          SECRET_KEY,
-          market,
-        );
-        const buyPriceForPosition = avgBuyPrice > 0 ? avgBuyPrice : price;
+        return;
+      }
+
+      if (!currentMarkets.includes(market)) return;
+      if (isBuying) return;
+
+      if (dailyLossPct <= DAILY_MAX_LOSS_PCT) {
+        if (!dailyLimitLogged) {
+          logger.warn(
+            LOG_SOURCE,
+            "일일 최대 손실 한도 도달 (누적 %s%%), 매수 중단",
+            dailyLossPct.toFixed(2),
+          );
+          dailyLimitLogged = true;
+        }
+        return;
+      }
+
+      const buyB = checkBuySignalB(market, price);
+      const buyA = buyB?.shouldBuy ? null : checkBuySignalA(market, price);
+      const buyC =
+        buyB?.shouldBuy || buyA?.shouldBuy
+          ? null
+          : checkBuySignalC(market, price);
+      const buySignal = buyB ?? buyA ?? buyC;
+      if (!buySignal?.shouldBuy) return;
+      isBuying = true;
+      const strategy = buySignal.strategy ?? undefined;
+      try {
         logger.info(
           LOG_SOURCE,
-          "매수 체결: %s %s 원 %s",
-          market,
-          buyPriceForPosition.toFixed(0),
-          avgBuyPrice > 0 ? "(체결평균가)" : "(신호가)",
+          "[매수] [전략%s] 신호: %s | %s 원",
+          strategy ?? "legacy",
+          buySignal.reason,
+          price.toFixed(0),
         );
-        position = {
-          market,
-          buyPrice: buyPriceForPosition,
-          volume: vol,
-          buyTime: Date.now(),
-          maxNetPct: 0,
-        };
-        currentMarkets = [market];
-        unsubscribeTicker();
-        subscribeTicker([market], handleTicker);
-      } else {
-        logger.error(LOG_SOURCE, "매수 실패: %s", res.message);
+        const res = await executeMarketBuy(ACCESS_KEY, SECRET_KEY, market);
+        if (res.ok && res.order) {
+          let vol = await fetchVolume(ACCESS_KEY, SECRET_KEY, market);
+          if (parseFloat(vol) <= 0) {
+            await sleep(300);
+            vol = await fetchVolume(ACCESS_KEY, SECRET_KEY, market);
+            if (parseFloat(vol) <= 0) {
+              logger.warn(
+                LOG_SOURCE,
+                "매수 체결 후 보유 수량 0 - 계정 반영 지연. 수량 재조회 실패.",
+              );
+            }
+          }
+          const avgBuyPrice = await fetchAvgBuyPrice(
+            ACCESS_KEY,
+            SECRET_KEY,
+            market,
+          );
+          const buyPriceForPosition = avgBuyPrice > 0 ? avgBuyPrice : price;
+          logger.info(
+            LOG_SOURCE,
+            "[매수] [전략%s] 체결: %s | %s 원 %s",
+            strategy ?? "legacy",
+            market,
+            buyPriceForPosition.toFixed(0),
+            avgBuyPrice > 0 ? "(체결평균가)" : "(신호가)",
+          );
+
+          let entryLow: number | undefined;
+          let entryAtr: number | undefined;
+          if (strategy === "A") {
+            const candles1m = getCandles(market, 1);
+            if (candles1m.length >= 1) {
+              const lastClosed = candles1m[candles1m.length - 1];
+              entryLow = lastClosed.low_price;
+            }
+            if (candles1m.length >= 15) {
+              const highs = candles1m.slice(-15).map((c) => c.high_price);
+              const lows = candles1m.slice(-15).map((c) => c.low_price);
+              const closes = candles1m.slice(-15).map((c) => c.trade_price);
+              const atr = calculateATR(highs, lows, closes);
+              entryAtr = atr * STRATEGY_A_ATR_STOP_MULT;
+            }
+          }
+
+          position = {
+            market,
+            buyPrice: buyPriceForPosition,
+            volume: vol,
+            buyTime: Date.now(),
+            maxNetPct: 0,
+            strategy,
+            entryLow,
+            entryAtr,
+            highestPrice: strategy === "C" ? price : undefined,
+            trailingActivated: strategy === "C" ? false : undefined,
+          };
+          currentMarkets = [market];
+          unsubscribeTicker();
+          subscribeTicker([market], handleTicker);
+        } else {
+          logger.error(
+            LOG_SOURCE,
+            "[매수] [전략%s] 실패: %s",
+            strategy ?? "legacy",
+            res.message,
+          );
+        }
+      } catch (e) {
+        logger.error(
+          LOG_SOURCE,
+          "[매수] [전략%s] 실행 중 오류: %s",
+          strategy ?? "legacy",
+          (e as Error).message,
+        );
+      } finally {
+        isBuying = false;
       }
-    } finally {
-      isBuying = false;
+    } catch (e) {
+      logger.error(
+        LOG_SOURCE,
+        "[오류] 티커 처리 중 예외: %s",
+        (e as Error).message,
+      );
     }
   };
 

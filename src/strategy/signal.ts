@@ -39,9 +39,14 @@ export interface BuySignalResult {
 export interface SellSignalResult {
   shouldSell: boolean;
   reason?: string;
+  /** 전략 B: RSI 70 판별용, 호출자가 position.lastRsi 갱신 시 사용 */
+  lastRsi?: number;
 }
 
-/** 매수: BB 하단 터치, RSI 과매도 반등, MACD 히스토그램 상승 또는 골든크로스, 거래량 급증(마지막 마감 봉 기준) */
+/**
+ * @deprecated A/B/C 전략 도입으로 미사용. 매수는 checkBuySignalB → checkBuySignalA → checkBuySignalC 순으로 검사.
+ * 매수: BB 하단 터치, RSI 과매도 반등, MACD 히스토그램 상승 또는 골든크로스, 거래량 급증(마지막 마감 봉 기준)
+ */
 export const checkBuySignal = (
   market: string,
   currentPrice: number,
