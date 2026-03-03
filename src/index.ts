@@ -29,6 +29,7 @@ import {
   RE_SELECT_AFTER_NO_BUY_MINUTES,
   DAILY_MAX_LOSS_PCT,
   STRATEGY_C_TRAILING_ACTIVATE_PCT,
+  STRATEGY_D_LOSS_COOLDOWN_MS,
 } from "./config";
 import { logger } from "./logger";
 
@@ -58,6 +59,9 @@ let dailyLimitLogged = false;
 
 /** 마지막으로 수신한 종목별 가격 (포지션 모니터링용) */
 const lastPrices: Record<string, number> = {};
+
+/** 전략 D 손실 종목 쿨다운 (종목별 마지막 손실 거래 시각) */
+const lossCooldown: Record<string, number> = {};
 
 /** 매매기록 PM2 error 로그용 KST 타임스탬프 */
 const tradeLogTimestamp = (): string => {
@@ -297,6 +301,17 @@ const run = async (): Promise<void> => {
                 (strategyCumulativePct[strategyTag] ?? 0) + finalNetPct;
               strategyCumulativeKrw[strategyTag] =
                 (strategyCumulativeKrw[strategyTag] ?? 0) + tradeProfitKrw;
+              
+              // 전략 D 손실 종목 쿨다운 등록
+              if (strategyTag === "D" && finalNetPct < 0) {
+                lossCooldown[position.market] = Date.now();
+                logger.info(
+                  LOG_SOURCE,
+                  "[쿨다운] 전략D 손실 종목 등록: %s (순수익 %s%%)",
+                  position.market,
+                  finalNetPct.toFixed(2),
+                );
+              }
               const tradeProfitStr =
                 tradeProfitKrw >= 0
                   ? `+${Math.round(tradeProfitKrw).toLocaleString()}원`
@@ -405,10 +420,29 @@ const run = async (): Promise<void> => {
         buyB?.shouldBuy || buyA?.shouldBuy
           ? null
           : checkBuySignalC(market, price);
-      const buyD =
-        buyB?.shouldBuy || buyA?.shouldBuy || buyC?.shouldBuy
-          ? null
-          : checkBuySignalD(market, price);
+      
+      // 전략 D 쿨다운 체크
+      let buyD = null;
+      if (!(buyB?.shouldBuy || buyA?.shouldBuy || buyC?.shouldBuy)) {
+        const cooldownTime = lossCooldown[market];
+        if (cooldownTime && Date.now() - cooldownTime < STRATEGY_D_LOSS_COOLDOWN_MS) {
+          const remainingMin = Math.ceil(
+            (STRATEGY_D_LOSS_COOLDOWN_MS - (Date.now() - cooldownTime)) / 60_000,
+          );
+          logger.debug(
+            LOG_SOURCE,
+            "[쿨다운] 전략D 진입 차단: %s (남은 시간 %s분)",
+            market,
+            remainingMin,
+          );
+        } else {
+          // 쿨다운 만료된 경우 맵에서 제거
+          if (cooldownTime) {
+            delete lossCooldown[market];
+          }
+          buyD = checkBuySignalD(market, price);
+        }
+      }
       const buyE =
         buyB?.shouldBuy || buyA?.shouldBuy || buyC?.shouldBuy || buyD?.shouldBuy
           ? null

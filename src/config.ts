@@ -104,6 +104,16 @@ export const STRATEGY_D_RSI_CROSS = 60;
 export const STRATEGY_D_VOLUME_RATIO = 1.5;
 export const STRATEGY_D_VOLUME_AVG_PERIOD = 5;
 export const STRATEGY_D_DISPLACEMENT_MAX = 1.02;
+/** 전략 D 이격도 최소값 — MA20 대비 이 비율 이상이어야 진입 (너무 가까이서 진입 시 노이즈 손절 방지) */
+export const STRATEGY_D_DISPLACEMENT_MIN = 1.003;
+/** 전략 D MA20 이탈 버퍼 — MA20 대비 이 비율만큼 하락해야 추세 붕괴로 판단 (노이즈 필터링) */
+export const STRATEGY_D_MA20_BREAK_BUFFER = 0.003;
+/** 전략 D 최소 가격 — 이 가격 미만 코인은 진입 차단 (저가 코인 호가 단위 문제 방지) */
+export const STRATEGY_D_MIN_PRICE = 100;
+/** 전략 D 최대 보유 시간(분) — 초과 시 강제 매도 */
+export const STRATEGY_D_MAX_HOLD_MINUTES = 15;
+/** 전략 D 손실 종목 쿨다운(ms) — 손실 거래 후 이 시간 동안 재진입 차단 */
+export const STRATEGY_D_LOSS_COOLDOWN_MS = 60 * 60 * 1000;
 export const STRATEGY_D_MA_PERIODS = [5, 10, 20] as const;
 export const STRATEGY_D_STOP_LOSS_PCT = -1.5;
 /** MA5 하향 이탈 시 익절로 매도하려면 넘어야 할 최소 순수익률(%) — 수수료·슬리피지 안전 마진 */

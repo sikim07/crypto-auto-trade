@@ -6,6 +6,10 @@ import {
   STRATEGY_D_VOLUME_RATIO,
   STRATEGY_D_VOLUME_AVG_PERIOD,
   STRATEGY_D_DISPLACEMENT_MAX,
+  STRATEGY_D_DISPLACEMENT_MIN,
+  STRATEGY_D_MA20_BREAK_BUFFER,
+  STRATEGY_D_MIN_PRICE,
+  STRATEGY_D_MAX_HOLD_MINUTES,
   STRATEGY_D_MA_PERIODS,
   STRATEGY_D_STOP_LOSS_PCT,
   STRATEGY_D_MIN_PROFIT_BEFORE_MA5_EXIT,
@@ -77,11 +81,18 @@ export const checkBuySignalD = (
     );
     if (volRatio <= STRATEGY_D_VOLUME_RATIO) return null;
 
+    // 저가 코인 필터
+    if (currentPrice < STRATEGY_D_MIN_PRICE) return null;
+
     const ma20_1m = calculateSMA(closedPrices.slice(-MA20_PERIOD), MA20_PERIOD);
     if (ma20_1m <= 0) return null;
-    if (currentPrice / ma20_1m > STRATEGY_D_DISPLACEMENT_MAX) return null;
-
+    
     const displacement = currentPrice / ma20_1m;
+    // 이격도 상한 체크
+    if (displacement > STRATEGY_D_DISPLACEMENT_MAX) return null;
+    // 이격도 하한 체크 (너무 가까이서 진입 시 노이즈 손절 방지)
+    if (displacement < STRATEGY_D_DISPLACEMENT_MIN) return null;
+
     logger.info(
       LOG_SOURCE,
       "[시그널] %s | 매수 조건 충족 | 가격 %s | MA20_1m %s | 이격도 %s",
@@ -129,6 +140,22 @@ export const checkSellSignalD = (
       };
     }
 
+    // 최대 보유 시간 체크
+    const holdMin = (Date.now() - position.buyTime) / 60_000;
+    if (holdMin >= STRATEGY_D_MAX_HOLD_MINUTES) {
+      logger.info(
+        LOG_SOURCE,
+        "[시그널] %s | 시간초과 (보유 %s분, 순수익 %s%%)",
+        market,
+        holdMin.toFixed(0),
+        netProfitPct.toFixed(2),
+      );
+      return {
+        shouldSell: true,
+        reason: `전략D 시간초과 (${holdMin.toFixed(0)}분)`,
+      };
+    }
+
     const candles1m = getCandles(market, 1);
     const prices1m = pricesFromCandles(candles1m);
     const volumes1m = volumesFromCandles(candles1m);
@@ -136,23 +163,24 @@ export const checkSellSignalD = (
       volumes1m.length > 1 && volumes1m[volumes1m.length - 1] === 0;
     const closedPrices = isCurrentCandleOpen ? prices1m.slice(0, -1) : prices1m;
 
-    // 2. 추세 붕괴(현재가 < MA20): 수익률과 관계없이 즉시 매도
+    // 2. 추세 붕괴(현재가 < MA20 × (1 - 버퍼)): 수익률과 관계없이 즉시 매도
     if (closedPrices.length >= MA20_PERIOD) {
       const ma20_1m = calculateSMA(
         closedPrices.slice(-MA20_PERIOD),
         MA20_PERIOD,
       );
-      if (currentPrice < ma20_1m) {
+      const ma20BreakThreshold = ma20_1m * (1 - STRATEGY_D_MA20_BREAK_BUFFER);
+      if (currentPrice < ma20BreakThreshold) {
         logger.info(
           LOG_SOURCE,
-          "[시그널] %s | 손절 (가격 %s < MA20 %s)",
+          "[시그널] %s | 손절 (가격 %s < MA20 버퍼 기준 %s)",
           market,
           currentPrice.toFixed(0),
-          ma20_1m.toFixed(0),
+          ma20BreakThreshold.toFixed(0),
         );
         return {
           shouldSell: true,
-          reason: `전략D 손절 (가격 ${currentPrice.toFixed(0)} < MA20 ${ma20_1m.toFixed(0)})`,
+          reason: `전략D 손절 (가격 ${currentPrice.toFixed(0)} < MA20 버퍼 기준 ${ma20BreakThreshold.toFixed(0)})`,
         };
       }
     }
