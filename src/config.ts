@@ -103,6 +103,8 @@ export const STRATEGY_D_VOLUME_AVG_PERIOD = 5;
 export const STRATEGY_D_DISPLACEMENT_MAX = 1.02;
 export const STRATEGY_D_MA_PERIODS = [5, 10, 20] as const;
 export const STRATEGY_D_STOP_LOSS_PCT = -1.5;
+/** MA5 하향 이탈 시 익절로 매도하려면 넘어야 할 최소 순수익률(%) — 수수료·슬리피지 안전 마진 */
+export const STRATEGY_D_MIN_PROFIT_BEFORE_MA5_EXIT = 0.5;
 
 /** 전략 E: 박스권 — BB 폭, 수평 기울기, RSI, 거래량 제외, 손절 */
 export const STRATEGY_E_BB_WIDTH_LOOKBACK = 100;

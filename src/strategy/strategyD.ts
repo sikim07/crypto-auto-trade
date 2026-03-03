@@ -8,6 +8,7 @@ import {
   STRATEGY_D_DISPLACEMENT_MAX,
   STRATEGY_D_MA_PERIODS,
   STRATEGY_D_STOP_LOSS_PCT,
+  STRATEGY_D_MIN_PROFIT_BEFORE_MA5_EXIT,
   COST_PCT,
 } from "../config";
 import type { BuySignalResult, SellSignalResult } from "./signal";
@@ -104,7 +105,7 @@ export const checkBuySignalD = (
   }
 };
 
-/** 전략 D 매도: 익절 MA5 하향 이탈(마감 봉), 손절 MA20 하향 또는 -1.5% */
+/** 전략 D 매도: 손절/MA20 추세 붕괴 최우선, 익절은 최소 수익 구간 넘은 뒤 MA5 하향 이탈 시에만 */
 export const checkSellSignalD = (
   market: string,
   position: BotPosition,
@@ -112,17 +113,19 @@ export const checkSellSignalD = (
 ): SellSignalResult => {
   try {
     const buyPrice = position.buyPrice;
-    const lossPct = getNetProfitPct(buyPrice, currentPrice);
-    if (lossPct <= STRATEGY_D_STOP_LOSS_PCT) {
+    const netProfitPct = getNetProfitPct(buyPrice, currentPrice);
+
+    // 1. 손절: 수익률과 관계없이 최우선
+    if (netProfitPct <= STRATEGY_D_STOP_LOSS_PCT) {
       logger.info(
         LOG_SOURCE,
         "[시그널] %s | 손절 (순수익 %s%%)",
         market,
-        lossPct.toFixed(2),
+        netProfitPct.toFixed(2),
       );
       return {
         shouldSell: true,
-        reason: `전략D 손절 (순수익 ${lossPct.toFixed(2)}%)`,
+        reason: `전략D 손절 (순수익 ${netProfitPct.toFixed(2)}%)`,
       };
     }
 
@@ -132,6 +135,8 @@ export const checkSellSignalD = (
     const isCurrentCandleOpen =
       volumes1m.length > 1 && volumes1m[volumes1m.length - 1] === 0;
     const closedPrices = isCurrentCandleOpen ? prices1m.slice(0, -1) : prices1m;
+
+    // 2. 추세 붕괴(현재가 < MA20): 수익률과 관계없이 즉시 매도
     if (closedPrices.length >= MA20_PERIOD) {
       const ma20_1m = calculateSMA(
         closedPrices.slice(-MA20_PERIOD),
@@ -151,20 +156,27 @@ export const checkSellSignalD = (
         };
       }
     }
+
+    // 3. 익절: 마감 봉 MA5 하향 이탈 + 최소 수익 구간 도달 시에만
     if (closedPrices.length >= MA5_PERIOD) {
       const lastClose = closedPrices[closedPrices.length - 1];
       const ma5_1m = calculateSMA(closedPrices.slice(-MA5_PERIOD), MA5_PERIOD);
-      if (lastClose < ma5_1m) {
+      const isMa5Broken = lastClose < ma5_1m;
+      const isMinProfitReached =
+        netProfitPct > STRATEGY_D_MIN_PROFIT_BEFORE_MA5_EXIT;
+
+      if (isMa5Broken && isMinProfitReached) {
         logger.info(
           LOG_SOURCE,
-          "[시그널] %s | 익절 (MA5 하향 이탈) 종가 %s < MA5 %s",
+          "[시그널] %s | 익절 (MA5 하향 이탈) 종가 %s < MA5 %s | 순수익 %s%%",
           market,
           lastClose.toFixed(0),
           ma5_1m.toFixed(0),
+          netProfitPct.toFixed(2),
         );
         return {
           shouldSell: true,
-          reason: `전략D 익절 (MA5 하향 이탈 ${lastClose.toFixed(0)} < ${ma5_1m.toFixed(0)})`,
+          reason: `전략D 익절 (MA5 하향 이탈 ${lastClose.toFixed(0)} < ${ma5_1m.toFixed(0)}, 순수익 ${netProfitPct.toFixed(2)}%)`,
         };
       }
     }
