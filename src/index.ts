@@ -46,6 +46,9 @@ let dailyProfitKrw = 0;
 let totalCumulativePct = 0;
 let totalCumulativeKrw = 0;
 let totalTradeCount = 0;
+/** 전략별 누적 수익률·수익액 (매도 시에만 갱신, 매매기록 error 로그용) */
+const strategyCumulativePct: Record<string, number> = {};
+const strategyCumulativeKrw: Record<string, number> = {};
 let lastResetDate = new Date().toDateString();
 let dailyLimitLogged = false;
 
@@ -286,6 +289,10 @@ const run = async (): Promise<void> => {
               totalCumulativePct += finalNetPct;
               totalCumulativeKrw += tradeProfitKrw;
               totalTradeCount += 1;
+              strategyCumulativePct[strategyTag] =
+                (strategyCumulativePct[strategyTag] ?? 0) + finalNetPct;
+              strategyCumulativeKrw[strategyTag] =
+                (strategyCumulativeKrw[strategyTag] ?? 0) + tradeProfitKrw;
               const tradeProfitStr =
                 tradeProfitKrw >= 0
                   ? `+${Math.round(tradeProfitKrw).toLocaleString()}원`
@@ -310,8 +317,23 @@ const run = async (): Promise<void> => {
                 dailyProfitStr,
                 String(dailyTradeCount),
               );
+              const strategyParts = (["A", "B", "C", "D", "E"] as const)
+                .filter((s) => strategyCumulativePct[s] != null)
+                .map((s) => {
+                  const pct = strategyCumulativePct[s];
+                  const krw = strategyCumulativeKrw[s] ?? 0;
+                  const krwStr =
+                    krw >= 0
+                      ? `+${Math.round(krw).toLocaleString()}원`
+                      : `${Math.round(krw).toLocaleString()}원`;
+                  return `${s}:${pct.toFixed(2)}% ${krwStr}`;
+                });
+              const strategyCumulativeStr =
+                strategyParts.length > 0
+                  ? ` | 전략별 누적 ${strategyParts.join(" ")}`
+                  : "";
               console.error(
-                `${tradeLogTimestamp()} [매매기록] 매도 | 전략${strategyTag} | ${position.market} | 수량 ${position.volume} | 순수익 ${finalNetPct.toFixed(2)}% ${tradeProfitStr} | 일일 누적 ${dailyLossPct.toFixed(2)}% ${dailyProfitStr} (${dailyTradeCount}회) | 전체 누적 ${totalCumulativePct.toFixed(2)}% ${totalProfitStr} (${totalTradeCount}회)`,
+                `${tradeLogTimestamp()} [매매기록] 매도 | 전략${strategyTag} | ${position.market} | 수량 ${position.volume} | 순수익 ${finalNetPct.toFixed(2)}% ${tradeProfitStr} | 일일 누적 ${dailyLossPct.toFixed(2)}% ${dailyProfitStr} (${dailyTradeCount}회) | 전체 누적 ${totalCumulativePct.toFixed(2)}% ${totalProfitStr} (${totalTradeCount}회)${strategyCumulativeStr}`,
               );
               position = null;
               currentMarkets = await selectAndLoad();
