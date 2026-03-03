@@ -1,7 +1,8 @@
 import * as crypto from "crypto";
 
+/** 업비트: HS512(HMAC with SHA-512) 사용 권장 */
 const JWT_HEADER = Buffer.from(
-  JSON.stringify({ alg: "HS256", typ: "JWT" }),
+  JSON.stringify({ alg: "HS512", typ: "JWT" }),
 ).toString("base64url");
 const QUERY_HASH_ALG = "SHA512";
 
@@ -13,7 +14,7 @@ const base64url = (buf: Buffer): string =>
     .replace(/=+$/, "");
 
 const sign = (payload: string, secret: string): string => {
-  const hmac = crypto.createHmac("sha256", secret);
+  const hmac = crypto.createHmac("sha512", secret);
   hmac.update(payload);
   return base64url(hmac.digest());
 };
@@ -62,8 +63,9 @@ export const generateToken = (
 };
 
 /**
- * POST body용 JWT (query_hash = SHA512(키=값&... 알파벳순))
- * Body는 JSON으로 전송하지만, 해시는 query string 형식으로 계산.
+ * POST body용 JWT (query_hash = SHA512(쿼리문자열))
+ * 업비트: 실제 요청과 토큰의 문자열 구성 순서가 같아야 함. URL 인코딩 없이 Hash.
+ * bodyParams의 키 순서(삽입 순서)를 유지하여 쿼리 문자열 생성.
  */
 export const generateTokenWithBody = (
   accessKey: string,
@@ -77,10 +79,9 @@ export const generateTokenWithBody = (
   };
 
   if (bodyParams && Object.keys(bodyParams).length > 0) {
-    const parts = Object.entries(bodyParams)
-      .sort(([a], [b]) => a.localeCompare(b))
-      .map(([k, v]) => `${k}=${encodeURIComponent(v)}`);
-    const query = parts.join("&");
+    const query = Object.entries(bodyParams)
+      .map(([k, v]) => `${k}=${v}`)
+      .join("&");
     const queryHash = crypto
       .createHash(QUERY_HASH_ALG)
       .update(query, "utf8")
