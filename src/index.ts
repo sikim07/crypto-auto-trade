@@ -43,11 +43,26 @@ let isSelling = false;
 let dailyLossPct = 0;
 let dailyTradeCount = 0;
 let dailyProfitKrw = 0;
+let totalCumulativePct = 0;
+let totalCumulativeKrw = 0;
+let totalTradeCount = 0;
 let lastResetDate = new Date().toDateString();
 let dailyLimitLogged = false;
 
 /** 마지막으로 수신한 종목별 가격 (포지션 모니터링용) */
 const lastPrices: Record<string, number> = {};
+
+/** 매매기록 PM2 error 로그용 KST 타임스탬프 */
+const tradeLogTimestamp = (): string => {
+  const d = new Date();
+  const datePart = d.toLocaleDateString("en-CA", { timeZone: "Asia/Seoul" });
+  const timePart = d.toLocaleTimeString("en-GB", {
+    timeZone: "Asia/Seoul",
+    hour12: false,
+  });
+  const ms = String(d.getUTCMilliseconds()).padStart(3, "0");
+  return `${datePart} ${timePart}.${ms}`;
+};
 
 const resetDailyLossIfNewDay = (): void => {
   const today = new Date().toDateString();
@@ -268,6 +283,9 @@ const run = async (): Promise<void> => {
               dailyLossPct += finalNetPct;
               dailyProfitKrw += tradeProfitKrw;
               dailyTradeCount += 1;
+              totalCumulativePct += finalNetPct;
+              totalCumulativeKrw += tradeProfitKrw;
+              totalTradeCount += 1;
               const tradeProfitStr =
                 tradeProfitKrw >= 0
                   ? `+${Math.round(tradeProfitKrw).toLocaleString()}원`
@@ -276,6 +294,10 @@ const run = async (): Promise<void> => {
                 dailyProfitKrw >= 0
                   ? `+${Math.round(dailyProfitKrw).toLocaleString()}원`
                   : `${Math.round(dailyProfitKrw).toLocaleString()}원`;
+              const totalProfitStr =
+                totalCumulativeKrw >= 0
+                  ? `+${Math.round(totalCumulativeKrw).toLocaleString()}원`
+                  : `${Math.round(totalCumulativeKrw).toLocaleString()}원`;
               logger.info(
                 LOG_SOURCE,
                 "[매도] [전략%s] 체결: %s 수량 %s | 순수익 %s% %s | 일일 누적 %s% %s | 오늘 %s회차",
@@ -287,6 +309,9 @@ const run = async (): Promise<void> => {
                 dailyLossPct.toFixed(2),
                 dailyProfitStr,
                 String(dailyTradeCount),
+              );
+              console.error(
+                `${tradeLogTimestamp()} [매매기록] 매도 | 전략${strategyTag} | ${position.market} | 수량 ${position.volume} | 순수익 ${finalNetPct.toFixed(2)}% ${tradeProfitStr} | 일일 누적 ${dailyLossPct.toFixed(2)}% ${dailyProfitStr} (${dailyTradeCount}회) | 전체 누적 ${totalCumulativePct.toFixed(2)}% ${totalProfitStr} (${totalTradeCount}회)`,
               );
               position = null;
               currentMarkets = await selectAndLoad();
@@ -400,6 +425,17 @@ const run = async (): Promise<void> => {
             market,
             buyPriceForPosition.toFixed(0),
             avgBuyPrice > 0 ? "(체결평균가)" : "(신호가)",
+          );
+          const dailyStrBuy =
+            dailyProfitKrw >= 0
+              ? `+${Math.round(dailyProfitKrw).toLocaleString()}원`
+              : `${Math.round(dailyProfitKrw).toLocaleString()}원`;
+          const totalStrBuy =
+            totalCumulativeKrw >= 0
+              ? `+${Math.round(totalCumulativeKrw).toLocaleString()}원`
+              : `${Math.round(totalCumulativeKrw).toLocaleString()}원`;
+          console.error(
+            `${tradeLogTimestamp()} [매매기록] 매수 | 전략${strategy ?? "legacy"} | ${market} | ${buyPriceForPosition.toFixed(0)} 원 | 일일 누적 ${dailyLossPct.toFixed(2)}% ${dailyStrBuy} (${dailyTradeCount}회) | 전체 누적 ${totalCumulativePct.toFixed(2)}% ${totalStrBuy} (${totalTradeCount}회)`,
           );
 
           let entryLow: number | undefined;
