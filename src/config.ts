@@ -127,3 +127,17 @@ export const STRATEGY_E_RSI_OVERSOLD = 40;
 export const STRATEGY_E_VOLUME_AVG_PERIOD = 5;
 export const STRATEGY_E_VOLUME_EXCLUDE_RATIO = 2;
 export const STRATEGY_E_STOP_BELOW_LOWER_RATIO = 0.99;
+
+/** 레짐: 하드 차단만 (급락·패닉 시 매수 중단, downtrend+RS 미사용) */
+/** 급락 감지 lookback (5분봉 개수, 6개 = 30분) */
+export const REGIME_CRASH_LOOKBACK = 6;
+/** 30분 내 BTC 낙폭이 이 값 이하이면 급락으로 판단 (%) */
+export const REGIME_CRASH_PCT = -2.0;
+/** 급락 감지 후 매수 재개까지의 쿨다운(ms) */
+export const REGIME_CRASH_COOLDOWN_MS = 30 * 60 * 1000;
+/** 패닉 거래량: 직전 평균 대비 이 배수 초과 시 패닉 */
+export const REGIME_PANIC_VOLUME_RATIO = 3.0;
+/** 패닉 볼륨 평균 산출에 사용할 직전 5분봉 수 */
+export const REGIME_PANIC_VOLUME_LOOKBACK = 19;
+/** 레짐 캐시 유효 시간(ms) */
+export const REGIME_CACHE_MS = 60 * 1000;

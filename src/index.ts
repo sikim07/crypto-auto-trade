@@ -32,6 +32,7 @@ import {
   STRATEGY_D_LOSS_COOLDOWN_MS,
 } from "./config";
 import { logger } from "./logger";
+import { getMarketRegime } from "./strategy/marketRegime";
 
 const LOG_SOURCE = "index";
 const ACCESS_KEY = process.env.ACCESS_KEY!;
@@ -100,6 +101,21 @@ const run = async (): Promise<void> => {
   }
 
   const selectAndLoad = async (): Promise<string[]> => {
+    try {
+      const [btcCandles1m, btcCandles5m] = await Promise.all([
+        fetchCandles("KRW-BTC", CANDLE_WINDOW_SIZE, "minutes1"),
+        fetchCandles("KRW-BTC", CANDLE_WINDOW_SIZE_5M, "minutes5"),
+      ]);
+      setCandles("KRW-BTC", btcCandles1m, 1);
+      setCandles("KRW-BTC", btcCandles5m, 5);
+    } catch (e) {
+      logger.warn(
+        LOG_SOURCE,
+        "BTC 캔들 사전 적재 실패: %s",
+        (e as Error).message,
+      );
+    }
+
     const markets = await selectTopMarkets();
     if (markets.length === 0) {
       logger.error(LOG_SOURCE, "치명적: 선정된 종목이 없습니다.");
@@ -126,6 +142,17 @@ const run = async (): Promise<void> => {
   /** 주기: 캔들 REST 갱신(거래량 보정) + 포지션 상태 로그 + 매수 없을 때 N분 경과 시 종목 재선정 */
   setInterval(async () => {
     try {
+      try {
+        const [btcCandles1m, btcCandles5m] = await Promise.all([
+          fetchCandles("KRW-BTC", CANDLE_WINDOW_SIZE, "minutes1"),
+          fetchCandles("KRW-BTC", CANDLE_WINDOW_SIZE_5M, "minutes5"),
+        ]);
+        setCandles("KRW-BTC", btcCandles1m, 1);
+        setCandles("KRW-BTC", btcCandles5m, 5);
+      } catch (e) {
+        logger.warn(LOG_SOURCE, "BTC 캔들 갱신 실패: %s", (e as Error).message);
+      }
+
       for (const market of currentMarkets) {
         try {
           const candles = await fetchCandles(
@@ -248,7 +275,19 @@ const run = async (): Promise<void> => {
           reason?: string;
           lastRsi?: number;
         };
-        if (position.strategy === "A") {
+        const regimeForSell = getMarketRegime();
+        if (regimeForSell.crashing && curNetPct < 0) {
+          logger.warn(
+            LOG_SOURCE,
+            "[긴급 청산] BTC 급락 중 손실 포지션 강제 청산: %s (순수익 %s%)",
+            position.market,
+            curNetPct.toFixed(2),
+          );
+          sellSignal = {
+            shouldSell: true,
+            reason: `BTC 급락 중 긴급 청산 (순수익 ${curNetPct.toFixed(2)}%)`,
+          };
+        } else if (position.strategy === "A") {
           sellSignal = checkSellSignalA(position.market, position, price);
         } else if (position.strategy === "B") {
           sellSignal = checkSellSignalB(position.market, position, price);
@@ -301,7 +340,7 @@ const run = async (): Promise<void> => {
                 (strategyCumulativePct[strategyTag] ?? 0) + finalNetPct;
               strategyCumulativeKrw[strategyTag] =
                 (strategyCumulativeKrw[strategyTag] ?? 0) + tradeProfitKrw;
-              
+
               // 전략 D 손실 종목 쿨다운 등록
               if (strategyTag === "D" && finalNetPct < 0) {
                 lossCooldown[position.market] = Date.now();
@@ -414,20 +453,40 @@ const run = async (): Promise<void> => {
         return;
       }
 
+      const regime = getMarketRegime();
+      if (regime.crashing) {
+        logger.warn(
+          LOG_SOURCE,
+          "[레짐 차단] BTC 급락/쿨다운 중, 전략 무관 매수 중단",
+        );
+        return;
+      }
+      if (regime.panicVolume) {
+        logger.warn(
+          LOG_SOURCE,
+          "[레짐 차단] BTC 패닉 볼륨 감지, 전략 무관 매수 중단",
+        );
+        return;
+      }
+
       const buyB = checkBuySignalB(market, price);
       const buyA = buyB?.shouldBuy ? null : checkBuySignalA(market, price);
       const buyC =
         buyB?.shouldBuy || buyA?.shouldBuy
           ? null
           : checkBuySignalC(market, price);
-      
+
       // 전략 D 쿨다운 체크
       let buyD = null;
       if (!(buyB?.shouldBuy || buyA?.shouldBuy || buyC?.shouldBuy)) {
         const cooldownTime = lossCooldown[market];
-        if (cooldownTime && Date.now() - cooldownTime < STRATEGY_D_LOSS_COOLDOWN_MS) {
+        if (
+          cooldownTime &&
+          Date.now() - cooldownTime < STRATEGY_D_LOSS_COOLDOWN_MS
+        ) {
           const remainingMin = Math.ceil(
-            (STRATEGY_D_LOSS_COOLDOWN_MS - (Date.now() - cooldownTime)) / 60_000,
+            (STRATEGY_D_LOSS_COOLDOWN_MS - (Date.now() - cooldownTime)) /
+              60_000,
           );
           logger.debug(
             LOG_SOURCE,
