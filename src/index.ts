@@ -63,6 +63,8 @@ const lastPrices: Record<string, number> = {};
 
 /** 전략 D 손실 종목 쿨다운 (종목별 마지막 손실 거래 시각) */
 const lossCooldown: Record<string, number> = {};
+/** 전략 D 쿨다운 차단 로그 쓰로틀 (종목별 마지막 로그 시각) */
+const lossCooldownLastLog: Record<string, number> = {};
 
 /** 매매기록 PM2 error 로그용 KST 타임스탬프 */
 const tradeLogTimestamp = (): string => {
@@ -484,20 +486,25 @@ const run = async (): Promise<void> => {
           cooldownTime &&
           Date.now() - cooldownTime < STRATEGY_D_LOSS_COOLDOWN_MS
         ) {
-          const remainingMin = Math.ceil(
-            (STRATEGY_D_LOSS_COOLDOWN_MS - (Date.now() - cooldownTime)) /
-              60_000,
-          );
-          logger.debug(
-            LOG_SOURCE,
-            "[쿨다운] 전략D 진입 차단: %s (남은 시간 %s분)",
-            market,
-            remainingMin,
-          );
+          const now = Date.now();
+          const lastLog = lossCooldownLastLog[market] ?? 0;
+          if (now - lastLog >= 5 * 60_000) {
+            const remainingMin = Math.ceil(
+              (STRATEGY_D_LOSS_COOLDOWN_MS - (now - cooldownTime)) / 60_000,
+            );
+            logger.debug(
+              LOG_SOURCE,
+              "[쿨다운] 전략D 진입 차단: %s (남은 시간 %s분)",
+              market,
+              remainingMin,
+            );
+            lossCooldownLastLog[market] = now;
+          }
         } else {
           // 쿨다운 만료된 경우 맵에서 제거
           if (cooldownTime) {
             delete lossCooldown[market];
+            delete lossCooldownLastLog[market];
           }
           buyD = checkBuySignalD(market, price);
         }
