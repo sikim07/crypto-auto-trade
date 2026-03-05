@@ -93,7 +93,28 @@ const resetDailyLossIfNewDay = (): void => {
 const sleep = (ms: number): Promise<void> =>
   new Promise((r) => setTimeout(r, ms));
 
+const printStartupBanner = (): void => {
+  const line = "=".repeat(60);
+  const now = new Date().toLocaleString("ko-KR", {
+    timeZone: "Asia/Seoul",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  });
+  console.log(line);
+  console.log(`  🚀 CRYPTO AUTO TRADE BOT 기동`);
+  console.log(`  시각: ${now} (KST)`);
+  console.log(`  PID : ${process.pid}`);
+  console.log(line);
+};
+
 const run = async (): Promise<void> => {
+  printStartupBanner();
+
   if (!ACCESS_KEY || !SECRET_KEY) {
     logger.error(
       LOG_SOURCE,
@@ -636,7 +657,35 @@ const run = async (): Promise<void> => {
   );
 };
 
+const printShutdownBanner = (reason: string): void => {
+  const line = "=".repeat(60);
+  const now = new Date().toLocaleString("ko-KR", {
+    timeZone: "Asia/Seoul",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  });
+  console.error(line);
+  console.error(`  ⛔ CRYPTO AUTO TRADE BOT 종료`);
+  console.error(`  사유: ${reason}`);
+  console.error(`  시각: ${now} (KST)`);
+  console.error(`  PID : ${process.pid}`);
+  console.error(line);
+};
+
+for (const sig of ["SIGINT", "SIGTERM"] as const) {
+  process.on(sig, () => {
+    printShutdownBanner(`시그널(${sig}) 수신`);
+    process.exit(0);
+  });
+}
+
 run().catch((e) => {
   logger.error(LOG_SOURCE, "치명적: %s", (e as Error).message);
+  printShutdownBanner(`치명적 오류: ${(e as Error).message}`);
   process.exit(1);
 });
