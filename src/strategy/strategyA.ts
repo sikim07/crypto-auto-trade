@@ -118,6 +118,14 @@ export const checkBuySignalA = (
       currentPrice.toFixed(0),
       entryMode,
     );
+    logger.info(
+      LOG_SOURCE,
+      "[BT] A 매수 RSI=%s volRatio=%s entry=%s price=%s",
+      rsiCur.toFixed(1),
+      volRatio.toFixed(2),
+      entryMode,
+      currentPrice.toFixed(0),
+    );
     return {
       shouldBuy: true,
       reason: `전략A: BB하단+RSI30상향돌파(${entryMode})+거래량`,
@@ -168,6 +176,13 @@ export const checkSellSignalA = (
       holdMin.toFixed(1),
       currentPrice.toFixed(0),
     );
+    logger.info(
+      LOG_SOURCE,
+      "[BT] A 매도 type=최대보유 holdMin=%s price=%s maxHold=%s",
+      holdMin.toFixed(1),
+      currentPrice.toFixed(0),
+      String(STRATEGY_A_MAX_HOLD_MINUTES),
+    );
     return {
       shouldSell: true,
       reason: `전략A 최대보유 초과 (${holdMin.toFixed(1)}분, 현재가 ${currentPrice.toFixed(0)})`,
@@ -189,6 +204,13 @@ export const checkSellSignalA = (
       currentPrice.toFixed(0),
       stopPrice.toFixed(0),
     );
+    logger.info(
+      LOG_SOURCE,
+      "[BT] A 매도 type=손절 stopPrice=%s price=%s reason=%s",
+      stopPrice.toFixed(0),
+      currentPrice.toFixed(0),
+      stopReason,
+    );
     return {
       shouldSell: true,
       reason: `전략A 손절 (${stopReason} 가격 ${currentPrice.toFixed(0)} <= ${stopPrice.toFixed(0)})`,
@@ -204,6 +226,12 @@ export const checkSellSignalA = (
         LOG_SOURCE,
         "[시그널] %s | 익절 (BB 중앙) | 현재가 %s >= 중앙선 %s",
         market,
+        currentPrice.toFixed(0),
+        bb.middle.toFixed(0),
+      );
+      logger.info(
+        LOG_SOURCE,
+        "[BT] A 매도 type=익절 price=%s bbMiddle=%s",
         currentPrice.toFixed(0),
         bb.middle.toFixed(0),
       );

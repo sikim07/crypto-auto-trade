@@ -133,6 +133,14 @@ export const checkBuySignalE = (
       rsiCur.toFixed(1),
       volRatio,
     );
+    logger.info(
+      LOG_SOURCE,
+      "[BT] E 매수 bbLower=%s RSI=%s volRatio=%s price=%s",
+      bb1m.lower.toFixed(0),
+      rsiCur.toFixed(1),
+      volRatio.toFixed(2),
+      currentPrice.toFixed(0),
+    );
     return {
       shouldBuy: true,
       reason: "전략E: BB수축+수평+하단터치양봉+RSI40상향",
@@ -172,6 +180,12 @@ export const checkSellSignalE = (
           currentPrice.toFixed(0),
           bb.upper.toFixed(0),
         );
+        logger.info(
+          LOG_SOURCE,
+          "[BT] E 매도 type=익절 price=%s bbUpper=%s",
+          currentPrice.toFixed(0),
+          bb.upper.toFixed(0),
+        );
         return {
           shouldSell: true,
           reason: `전략E 익절 (BB 상단 터치 ${currentPrice.toFixed(0)} >= ${bb.upper.toFixed(0)})`,
@@ -190,6 +204,13 @@ export const checkSellSignalE = (
           market,
           lastClose.toFixed(0),
           threshold.toFixed(0),
+        );
+        logger.info(
+          LOG_SOURCE,
+          "[BT] E 매도 type=하단이탈 close=%s thr=%s ratio=%s",
+          lastClose.toFixed(0),
+          threshold.toFixed(0),
+          String(STRATEGY_E_STOP_BELOW_LOWER_RATIO),
         );
         return {
           shouldSell: true,

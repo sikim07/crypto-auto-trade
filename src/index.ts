@@ -73,6 +73,9 @@ let regimeBlockCrashingActive = false;
 /** 레짐 차단 로그: 패닉 볼륨 구간에 진입했는지 (시작/종료만 로그용) */
 let regimeBlockPanicVolumeActive = false;
 
+/** [대기] 로그: 직전에 출력한 상태(상황이 바뀔 때만 재출력) */
+let lastWaitLogSnapshot: string | null = null;
+
 /** 매매기록 PM2 error 로그용 KST 타임스탬프 */
 const tradeLogTimestamp = (): string => {
   const d = new Date();
@@ -219,18 +222,23 @@ const run = async (): Promise<void> => {
           );
         }
       } else {
+        const marketsStr = currentMarkets.join(", ");
         const dailyProfitStr =
           dailyProfitKrw >= 0
             ? `+${Math.round(dailyProfitKrw).toLocaleString()}원`
             : `${Math.round(dailyProfitKrw).toLocaleString()}원`;
-        logger.info(
-          LOG_SOURCE,
-          "[대기] 관심종목 %s | 일일 누적 %s% %s (%s회 매매)",
-          currentMarkets.join(", "),
-          dailyLossPct.toFixed(2),
-          dailyProfitStr,
-          String(dailyTradeCount),
-        );
+        const waitSnapshot = `${marketsStr}|${dailyLossPct.toFixed(2)}|${dailyProfitStr}|${dailyTradeCount}`;
+        if (lastWaitLogSnapshot !== waitSnapshot) {
+          lastWaitLogSnapshot = waitSnapshot;
+          logger.info(
+            LOG_SOURCE,
+            "[대기] 관심종목 %s | 일일 누적 %s% %s (%s회 매매)",
+            marketsStr,
+            dailyLossPct.toFixed(2),
+            dailyProfitStr,
+            String(dailyTradeCount),
+          );
+        }
       }
 
       if (

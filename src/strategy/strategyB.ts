@@ -119,6 +119,15 @@ export const checkBuySignalB = (
       String(threshold),
       withDivergence ? "(다이버전스)" : "",
     );
+    logger.info(
+      LOG_SOURCE,
+      "[BT] B 매수 MACD_hist=%s RSI=%s thr=%s div=%s price=%s",
+      macd5m.histogram.toFixed(6),
+      rsiCur.toFixed(1),
+      String(threshold),
+      withDivergence ? "1" : "0",
+      currentPrice.toFixed(0),
+    );
     return {
       shouldBuy: true,
       reason: withDivergence
@@ -151,6 +160,12 @@ export const checkSellSignalB = (
       market,
       netPct.toFixed(2),
     );
+    logger.info(
+      LOG_SOURCE,
+      "[BT] B 매도 type=손절 netPct=%s thr=%s",
+      netPct.toFixed(2),
+      String(STRATEGY_B_STOP_LOSS_PCT),
+    );
     return {
       shouldSell: true,
       reason: `전략B 손절 (순수익 ${netPct.toFixed(2)}%)`,
@@ -165,6 +180,13 @@ export const checkSellSignalB = (
       market,
       holdMin.toFixed(0),
       netPct.toFixed(2),
+    );
+    logger.info(
+      LOG_SOURCE,
+      "[BT] B 매도 type=최대보유 holdMin=%s netPct=%s maxHold=%s",
+      holdMin.toFixed(0),
+      netPct.toFixed(2),
+      String(STRATEGY_B_MAX_HOLD_MINUTES),
     );
     return {
       shouldSell: true,
@@ -191,6 +213,12 @@ export const checkSellSignalB = (
         market,
         rsiCur.toFixed(1),
       );
+      logger.info(
+        LOG_SOURCE,
+        "[BT] B 매도 type=데드크로스 RSI=%s netPct=%s",
+        rsiCur.toFixed(1),
+        netPct.toFixed(2),
+      );
       return {
         shouldSell: true,
         reason: `전략B 손절 (MACD 데드크로스 + RSI ${rsiCur.toFixed(1)})`,
@@ -208,6 +236,13 @@ export const checkSellSignalB = (
         market,
         prevRsi.toFixed(1),
         rsiCur.toFixed(1),
+      );
+      logger.info(
+        LOG_SOURCE,
+        "[BT] B 매도 type=익절 RSI=%s→%s netPct=%s",
+        prevRsi.toFixed(1),
+        rsiCur.toFixed(1),
+        netPct.toFixed(2),
       );
       return {
         shouldSell: true,

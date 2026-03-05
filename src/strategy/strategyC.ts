@@ -86,6 +86,14 @@ export const checkBuySignalC = (
       currentPrice.toFixed(0),
       volRatio * 100,
     );
+    logger.info(
+      LOG_SOURCE,
+      "[BT] C 매수 bandWidth=%s volRatio=%s bodyRatio=%s price=%s",
+      bandWidth.toFixed(4),
+      volRatio.toFixed(2),
+      bodyRatio.toFixed(2),
+      currentPrice.toFixed(0),
+    );
     return {
       shouldBuy: true,
       reason: "전략C: BB수축+상단돌파+거래량200%+몸통비",
@@ -122,6 +130,12 @@ export const checkSellSignalC = (
       market,
       netPct.toFixed(2),
     );
+    logger.info(
+      LOG_SOURCE,
+      "[BT] C 매도 type=손절 netPct=%s thr=%s",
+      netPct.toFixed(2),
+      String(STRATEGY_C_STOP_LOSS_PCT),
+    );
     return {
       shouldSell: true,
       reason: `전략C 손절 (순수익 ${netPct.toFixed(2)}%)`,
@@ -136,6 +150,13 @@ export const checkSellSignalC = (
       market,
       holdMin.toFixed(0),
       netPct.toFixed(2),
+    );
+    logger.info(
+      LOG_SOURCE,
+      "[BT] C 매도 type=최대보유 holdMin=%s netPct=%s maxHold=%s",
+      holdMin.toFixed(0),
+      netPct.toFixed(2),
+      String(STRATEGY_C_MAX_HOLD_MINUTES),
     );
     return {
       shouldSell: true,
@@ -161,6 +182,13 @@ export const checkSellSignalC = (
         currentPrice.toFixed(0),
         bb.middle.toFixed(0),
       );
+      logger.info(
+        LOG_SOURCE,
+        "[BT] C 매도 type=BB중앙하향 price=%s bbMiddle=%s netPct=%s",
+        currentPrice.toFixed(0),
+        bb.middle.toFixed(0),
+        netPct.toFixed(2),
+      );
       return {
         shouldSell: true,
         reason: `전략C 손절 (가격 ${currentPrice.toFixed(0)} < BB중앙 ${bb.middle.toFixed(0)})`,
@@ -178,6 +206,13 @@ export const checkSellSignalC = (
         market,
         position.highestPrice.toFixed(0),
         STRATEGY_C_TRAILING_OFFSET_PCT,
+      );
+      logger.info(
+        LOG_SOURCE,
+        "[BT] C 매도 type=트레일링 high=%s offsetPct=%s netPct=%s",
+        position.highestPrice.toFixed(0),
+        String(STRATEGY_C_TRAILING_OFFSET_PCT),
+        netPct.toFixed(2),
       );
       return {
         shouldSell: true,

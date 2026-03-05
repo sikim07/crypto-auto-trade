@@ -113,6 +113,15 @@ export const checkBuySignalD = (
       rsiPrev.toFixed(1),
       rsiCur.toFixed(1),
     );
+    logger.info(
+      LOG_SOURCE,
+      "[BT] D 매수 displacement=%s RSI=%s→%s volRatio=%s price=%s",
+      displacement.toFixed(4),
+      rsiPrev.toFixed(1),
+      rsiCur.toFixed(1),
+      volRatio.toFixed(2),
+      currentPrice.toFixed(0),
+    );
     return {
       shouldBuy: true,
       reason: "전략D: 정배열+1분봉정배열+RSI60상향+거래량150%+이격도범위",
@@ -146,6 +155,12 @@ export const checkSellSignalD = (
         market,
         netProfitPct.toFixed(2),
       );
+      logger.info(
+        LOG_SOURCE,
+        "[BT] D 매도 type=손절 netPct=%s thr=%s",
+        netProfitPct.toFixed(2),
+        String(STRATEGY_D_STOP_LOSS_PCT),
+      );
       return {
         shouldSell: true,
         reason: `전략D 손절 (순수익 ${netProfitPct.toFixed(2)}%)`,
@@ -165,6 +180,13 @@ export const checkSellSignalD = (
           position.maxNetPct.toFixed(2),
           netProfitPct.toFixed(2),
         );
+        logger.info(
+          LOG_SOURCE,
+          "[BT] D 매도 type=트레일링 maxPct=%s curPct=%s offsetPct=%s",
+          position.maxNetPct.toFixed(2),
+          netProfitPct.toFixed(2),
+          String(STRATEGY_D_TRAILING_OFFSET_PCT),
+        );
         return {
           shouldSell: true,
           reason: `전략D 트레일링 스톱 (고점 ${position.maxNetPct.toFixed(2)}% → 현재 ${netProfitPct.toFixed(2)}%)`,
@@ -181,6 +203,13 @@ export const checkSellSignalD = (
         market,
         holdMin.toFixed(0),
         netProfitPct.toFixed(2),
+      );
+      logger.info(
+        LOG_SOURCE,
+        "[BT] D 매도 type=시간초과 holdMin=%s netPct=%s maxHold=%s",
+        holdMin.toFixed(0),
+        netProfitPct.toFixed(2),
+        String(STRATEGY_D_MAX_HOLD_MINUTES),
       );
       return {
         shouldSell: true,
@@ -210,6 +239,13 @@ export const checkSellSignalD = (
           currentPrice.toFixed(0),
           ma20BreakThreshold.toFixed(0),
         );
+        logger.info(
+          LOG_SOURCE,
+          "[BT] D 매도 type=MA20이탈 price=%s ma20Thr=%s netPct=%s",
+          currentPrice.toFixed(0),
+          ma20BreakThreshold.toFixed(0),
+          netProfitPct.toFixed(2),
+        );
         return {
           shouldSell: true,
           reason: `전략D 손절 (가격 ${currentPrice.toFixed(0)} < MA20 버퍼 기준 ${ma20BreakThreshold.toFixed(0)})`,
@@ -233,6 +269,14 @@ export const checkSellSignalD = (
           lastClose.toFixed(0),
           ma5_1m.toFixed(0),
           netProfitPct.toFixed(2),
+        );
+        logger.info(
+          LOG_SOURCE,
+          "[BT] D 매도 type=MA5이탈 close=%s ma5=%s netPct=%s minProfitThr=%s",
+          lastClose.toFixed(0),
+          ma5_1m.toFixed(0),
+          netProfitPct.toFixed(2),
+          String(STRATEGY_D_MIN_PROFIT_BEFORE_MA5_EXIT),
         );
         return {
           shouldSell: true,

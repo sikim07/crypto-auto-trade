@@ -127,6 +127,16 @@ export const checkBuySignalF = (
       rsiPrev.toFixed(1),
       rsiCur.toFixed(1),
     );
+    logger.info(
+      LOG_SOURCE,
+      "[BT] F 매수 vwap1m=%s ema21=%s RSI=%s→%s proximityPct=%s price=%s",
+      vwap1m.toFixed(0),
+      ema21.toFixed(0),
+      rsiPrev.toFixed(1),
+      rsiCur.toFixed(1),
+      String(STRATEGY_F_PROXIMITY_PCT),
+      currentPrice.toFixed(0),
+    );
     return {
       shouldBuy: true,
       reason: `전략F: VWAP눌림목+EMA21+RSI${STRATEGY_F_RSI_CROSS}상향+양봉`,
@@ -159,6 +169,12 @@ export const checkSellSignalF = (
         market,
         netPct.toFixed(2),
       );
+      logger.info(
+        LOG_SOURCE,
+        "[BT] F 매도 type=손절 netPct=%s thr=%s",
+        netPct.toFixed(2),
+        String(STRATEGY_F_STOP_LOSS_PCT),
+      );
       return {
         shouldSell: true,
         reason: `전략F 손절 (순수익 ${netPct.toFixed(2)}%)`,
@@ -175,6 +191,13 @@ export const checkSellSignalF = (
         market,
         currentPrice.toFixed(0),
         STRATEGY_F_ENTRY_BREACH_PCT,
+      );
+      logger.info(
+        LOG_SOURCE,
+        "[BT] F 매도 type=진입이탈 price=%s breachPct=%s netPct=%s",
+        currentPrice.toFixed(0),
+        String(STRATEGY_F_ENTRY_BREACH_PCT),
+        netPct.toFixed(2),
       );
       return {
         shouldSell: true,
@@ -193,6 +216,13 @@ export const checkSellSignalF = (
           market,
           currentPrice.toFixed(0),
           vwap1m.toFixed(0),
+        );
+        logger.info(
+          LOG_SOURCE,
+          "[BT] F 매도 type=VWAP붕괴 price=%s vwap1m=%s netPct=%s",
+          currentPrice.toFixed(0),
+          vwap1m.toFixed(0),
+          netPct.toFixed(2),
         );
         return {
           shouldSell: true,
@@ -215,6 +245,13 @@ export const checkSellSignalF = (
             lastClose.toFixed(0),
             vwap1m.toFixed(0),
           );
+          logger.info(
+            LOG_SOURCE,
+            "[BT] F 매도 type=VWAP붕괴(종가) close=%s vwap1m=%s netPct=%s",
+            lastClose.toFixed(0),
+            vwap1m.toFixed(0),
+            netPct.toFixed(2),
+          );
           return {
             shouldSell: true,
             reason: `전략F 손절 (VWAP 붕괴 종가 ${lastClose.toFixed(0)} < ${vwap1m.toFixed(0)})`,
@@ -234,6 +271,13 @@ export const checkSellSignalF = (
           position.maxNetPct.toFixed(2),
           netPct.toFixed(2),
         );
+        logger.info(
+          LOG_SOURCE,
+          "[BT] F 매도 type=트레일링 maxPct=%s curPct=%s offsetPct=%s",
+          position.maxNetPct.toFixed(2),
+          netPct.toFixed(2),
+          String(STRATEGY_F_TRAILING_OFFSET_PCT),
+        );
         return {
           shouldSell: true,
           reason: `전략F 트레일링 스톱 (고점 ${position.maxNetPct.toFixed(2)}% → 현재 ${netPct.toFixed(2)}%)`,
@@ -250,6 +294,13 @@ export const checkSellSignalF = (
         market,
         holdMin.toFixed(1),
         netPct.toFixed(2),
+      );
+      logger.info(
+        LOG_SOURCE,
+        "[BT] F 매도 type=시간초과 holdMin=%s netPct=%s maxHold=%s",
+        holdMin.toFixed(1),
+        netPct.toFixed(2),
+        String(STRATEGY_F_MAX_HOLD_MINUTES),
       );
       return {
         shouldSell: true,
