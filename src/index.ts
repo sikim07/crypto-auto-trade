@@ -32,6 +32,7 @@ import {
   STRATEGY_D_LOSS_COOLDOWN_MS,
 } from "./config";
 import { logger } from "./logger";
+import { writeTradeLog, tradeLogPath } from "./tradeLogger";
 import { getMarketRegime } from "./strategy/marketRegime";
 
 const LOG_SOURCE = "index";
@@ -109,6 +110,7 @@ const printStartupBanner = (): void => {
   console.log(`  🚀 CRYPTO AUTO TRADE BOT 기동`);
   console.log(`  시각: ${now} (KST)`);
   console.log(`  PID : ${process.pid}`);
+  console.log(`  로그: ${tradeLogPath}`);
   console.log(line);
 };
 
@@ -413,9 +415,9 @@ const run = async (): Promise<void> => {
                 strategyParts.length > 0
                   ? ` | 전략별 누적 ${strategyParts.join(" ")}`
                   : "";
-              console.error(
-                `${tradeLogTimestamp()} [매매기록] 매도 | 전략${strategyTag} | ${position.market} | 수량 ${position.volume} | 순수익 ${finalNetPct.toFixed(2)}% ${tradeProfitStr} | 일일 누적 ${dailyLossPct.toFixed(2)}% ${dailyProfitStr} (${dailyTradeCount}회) | 전체 누적 ${totalCumulativePct.toFixed(2)}% ${totalProfitStr} (${totalTradeCount}회)${strategyCumulativeStr}`,
-              );
+              const sellTradeLog = `${tradeLogTimestamp()} [매매기록] 매도 | 전략${strategyTag} | ${position.market} | 수량 ${position.volume} | 순수익 ${finalNetPct.toFixed(2)}% ${tradeProfitStr} | 일일 누적 ${dailyLossPct.toFixed(2)}% ${dailyProfitStr} (${dailyTradeCount}회) | 전체 누적 ${totalCumulativePct.toFixed(2)}% ${totalProfitStr} (${totalTradeCount}회)${strategyCumulativeStr}`;
+              console.error(sellTradeLog);
+              writeTradeLog(sellTradeLog);
               position = null;
               currentMarkets = await selectAndLoad();
               if (currentMarkets.length === 0) {
@@ -581,9 +583,9 @@ const run = async (): Promise<void> => {
             totalCumulativeKrw >= 0
               ? `+${Math.round(totalCumulativeKrw).toLocaleString()}원`
               : `${Math.round(totalCumulativeKrw).toLocaleString()}원`;
-          console.error(
-            `${tradeLogTimestamp()} [매매기록] 매수 | 전략${strategy ?? "legacy"} | ${market} | ${buyPriceForPosition.toFixed(0)} 원 | 일일 누적 ${dailyLossPct.toFixed(2)}% ${dailyStrBuy} (${dailyTradeCount}회) | 전체 누적 ${totalCumulativePct.toFixed(2)}% ${totalStrBuy} (${totalTradeCount}회)`,
-          );
+          const buyTradeLog = `${tradeLogTimestamp()} [매매기록] 매수 | 전략${strategy ?? "legacy"} | ${market} | ${buyPriceForPosition.toFixed(0)} 원 | 일일 누적 ${dailyLossPct.toFixed(2)}% ${dailyStrBuy} (${dailyTradeCount}회) | 전체 누적 ${totalCumulativePct.toFixed(2)}% ${totalStrBuy} (${totalTradeCount}회)`;
+          console.error(buyTradeLog);
+          writeTradeLog(buyTradeLog);
 
           const buyTimeMs = Date.now();
           let entryLow: number | undefined;
