@@ -57,7 +57,7 @@ export const checkBuySignalB = (
   const candles1m = getClosed1mCandles(market);
   const candles5m = getCandles(market, 5);
   const min1m = MACD_SLOW + MACD_SIGNAL + 2;
-  const min5m = MACD_SLOW + MACD_SIGNAL;
+  const min5m = MACD_SLOW + MACD_SIGNAL + 1;
   if (candles1m.length < min1m || candles5m.length < min5m) return null;
 
   try {
@@ -141,21 +141,18 @@ export const checkSellSignalB = (
     const macd = calculateMACD(prices);
     const deadCross =
       macd.prevMacd >= macd.prevSignal && macd.macd < macd.signal;
-    if (deadCross) {
-      const confirmed = typeof rsiCur === "number" && rsiCur < RSI_50;
-      if (confirmed) {
-        logger.info(
-          LOG_SOURCE,
-          "[시그널] %s | 손절 (MACD 데드크로스 + RSI %s)",
-          market,
-          rsiCur.toFixed(1),
-        );
-        return {
-          shouldSell: true,
-          reason: `전략B 손절 (MACD 데드크로스 + RSI ${rsiCur.toFixed(1)})`,
-          ...(typeof rsiCur === "number" && { lastRsi: rsiCur }),
-        };
-      }
+    if (deadCross && typeof rsiCur === "number" && rsiCur < RSI_50) {
+      logger.info(
+        LOG_SOURCE,
+        "[시그널] %s | 손절 (MACD 데드크로스 + RSI %s)",
+        market,
+        rsiCur.toFixed(1),
+      );
+      return {
+        shouldSell: true,
+        reason: `전략B 손절 (MACD 데드크로스 + RSI ${rsiCur.toFixed(1)})`,
+        lastRsi: rsiCur,
+      };
     }
   }
 
