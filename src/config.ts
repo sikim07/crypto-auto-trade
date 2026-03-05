@@ -160,6 +160,8 @@ export const STRATEGY_F_STOP_LOSS_PCT = -1.5;
 export const STRATEGY_F_MAX_HOLD_MINUTES = 15;
 export const STRATEGY_F_TRAILING_ACTIVATE_PCT = 1.0;
 export const STRATEGY_F_TRAILING_OFFSET_PCT = 0.5;
+/** 진입가 대비 이 % 이하로 떨어지면 진입 수준 이탈 손절 (진입봉 저가 대신 사용) */
+export const STRATEGY_F_ENTRY_BREACH_PCT = 0.3;
 
 /** 레짐: 하드 차단만 (급락·패닉 시 매수 중단, downtrend+RS 미사용) */
 /** 급락 감지 lookback (5분봉 개수, 6개 = 30분) */

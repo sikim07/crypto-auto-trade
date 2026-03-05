@@ -11,6 +11,7 @@ import {
   STRATEGY_F_MAX_HOLD_MINUTES,
   STRATEGY_F_TRAILING_ACTIVATE_PCT,
   STRATEGY_F_TRAILING_OFFSET_PCT,
+  STRATEGY_F_ENTRY_BREACH_PCT,
   COST_PCT,
 } from "../config";
 import type { BuySignalResult, SellSignalResult } from "./signal";
@@ -164,24 +165,40 @@ export const checkSellSignalF = (
       };
     }
 
-    // 2. 진입 캔들 저점 이탈
-    if (position.entryLow !== undefined && currentPrice < position.entryLow) {
+    // 2. 진입 수준 이탈 (진입가 대비 -ENTRY_BREACH_PCT% 이하)
+    const entryBreachPrice =
+      position.buyPrice * (1 - STRATEGY_F_ENTRY_BREACH_PCT / 100);
+    if (currentPrice < entryBreachPrice) {
       logger.info(
         LOG_SOURCE,
-        "[시그널] %s | 손절 (진입 저점 이탈) 현재가 %s < 저점 %s",
+        "[시그널] %s | 손절 (진입 수준 이탈) 현재가 %s < 진입가대비 %s%% 이하",
         market,
         currentPrice.toFixed(0),
-        position.entryLow.toFixed(0),
+        STRATEGY_F_ENTRY_BREACH_PCT,
       );
       return {
         shouldSell: true,
-        reason: `전략F 손절 (진입 저점 이탈 ${currentPrice.toFixed(0)} < ${position.entryLow.toFixed(0)})`,
+        reason: `전략F 손절 (진입 수준 이탈 현재가 ${currentPrice.toFixed(0)} < 진입가대비 ${STRATEGY_F_ENTRY_BREACH_PCT}% 이하)`,
       };
     }
 
-    // 3. VWAP 붕괴: 마감봉 종가 < VWAP_1m
+    // 3. VWAP 붕괴: 현재가 < VWAP_1m 또는 마감봉 종가 < VWAP_1m
     const candles1m = getCandles(market, 1);
     if (candles1m.length > 0) {
+      const vwap1m = calcVwap(candles1m, STRATEGY_F_MIN_VWAP_CANDLES_1M);
+      if (vwap1m > 0 && currentPrice < vwap1m) {
+        logger.info(
+          LOG_SOURCE,
+          "[시그널] %s | 손절 (VWAP 붕괴) 현재가 %s < VWAP %s",
+          market,
+          currentPrice.toFixed(0),
+          vwap1m.toFixed(0),
+        );
+        return {
+          shouldSell: true,
+          reason: `전략F 손절 (VWAP 붕괴 현재가 ${currentPrice.toFixed(0)} < ${vwap1m.toFixed(0)})`,
+        };
+      }
       const volumes1m = volumesFromCandles(candles1m);
       const isCurrentCandleOpen =
         volumes1m.length > 1 && volumes1m[volumes1m.length - 1] === 0;
@@ -189,22 +206,19 @@ export const checkSellSignalF = (
         ? candles1m.slice(0, -1)
         : candles1m;
       if (closedCandles.length > 0) {
-        const vwap1m = calcVwap(candles1m, STRATEGY_F_MIN_VWAP_CANDLES_1M);
-        if (vwap1m > 0) {
-          const lastClose = closedCandles[closedCandles.length - 1].trade_price;
-          if (lastClose < vwap1m) {
-            logger.info(
-              LOG_SOURCE,
-              "[시그널] %s | 손절 (VWAP 붕괴) 마감 종가 %s < VWAP %s",
-              market,
-              lastClose.toFixed(0),
-              vwap1m.toFixed(0),
-            );
-            return {
-              shouldSell: true,
-              reason: `전략F 손절 (VWAP 붕괴 종가 ${lastClose.toFixed(0)} < ${vwap1m.toFixed(0)})`,
-            };
-          }
+        const lastClose = closedCandles[closedCandles.length - 1].trade_price;
+        if (lastClose < vwap1m) {
+          logger.info(
+            LOG_SOURCE,
+            "[시그널] %s | 손절 (VWAP 붕괴) 마감 종가 %s < VWAP %s",
+            market,
+            lastClose.toFixed(0),
+            vwap1m.toFixed(0),
+          );
+          return {
+            shouldSell: true,
+            reason: `전략F 손절 (VWAP 붕괴 종가 ${lastClose.toFixed(0)} < ${vwap1m.toFixed(0)})`,
+          };
         }
       }
     }
