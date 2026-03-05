@@ -125,7 +125,7 @@ export const STRATEGY_D_MIN_PRICE = 100;
 /** 전략 D 최대 보유 시간(분) — 초과 시 강제 매도 */
 export const STRATEGY_D_MAX_HOLD_MINUTES = 15;
 /** 전략 D 손실 종목 쿨다운(ms) — 손실 거래 후 이 시간 동안 재진입 차단 */
-export const STRATEGY_D_LOSS_COOLDOWN_MS = 60 * 60 * 1000;
+export const STRATEGY_D_LOSS_COOLDOWN_MS = 30 * 60 * 1000;
 export const STRATEGY_D_MA_PERIODS = [5, 10, 20] as const;
 export const STRATEGY_D_STOP_LOSS_PCT = -1.5;
 /** MA5 하향 이탈 시 익절로 매도하려면 넘어야 할 최소 순수익률(%) — 수수료·슬리피지 안전 마진 */
