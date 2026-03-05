@@ -3,6 +3,7 @@ import { calculateRSI, getVolumeRatio, calculateSMA } from "../indicators";
 import {
   RSI_PERIOD,
   STRATEGY_D_RSI_CROSS,
+  STRATEGY_D_RSI_MIN_CROSS_STRENGTH,
   STRATEGY_D_VOLUME_RATIO,
   STRATEGY_D_VOLUME_AVG_PERIOD,
   STRATEGY_D_DISPLACEMENT_MAX,
@@ -13,6 +14,8 @@ import {
   STRATEGY_D_MA_PERIODS,
   STRATEGY_D_STOP_LOSS_PCT,
   STRATEGY_D_MIN_PROFIT_BEFORE_MA5_EXIT,
+  STRATEGY_D_TRAILING_ACTIVATE_PCT,
+  STRATEGY_D_TRAILING_OFFSET_PCT,
   COST_PCT,
 } from "../config";
 import type { BuySignalResult, SellSignalResult } from "./signal";
@@ -71,6 +74,8 @@ export const checkBuySignalD = (
     const rsiCur = calculateRSI(rsiPrices);
     if (!(rsiPrev < STRATEGY_D_RSI_CROSS && rsiCur >= STRATEGY_D_RSI_CROSS))
       return null;
+    // 방안 B: 단순 경계 터치(예: 59→60)가 아닌 최소 3p 이상 상향 돌파만 유효 신호로 인정
+    if (rsiCur - rsiPrev < STRATEGY_D_RSI_MIN_CROSS_STRENGTH) return null;
 
     const lastClosedVol = closedVolumes[closedVolumes.length - 1] ?? 0;
     const prevVols = closedVolumes.slice(0, -1);
@@ -86,24 +91,31 @@ export const checkBuySignalD = (
 
     const ma20_1m = calculateSMA(closedPrices.slice(-MA20_PERIOD), MA20_PERIOD);
     if (ma20_1m <= 0) return null;
-    
+
+    // 방안 D: 1분봉 단기 정배열 — MA5 > MA10이어야 1분봉 자체가 상승 방향임을 확인
+    const ma5_1m = calculateSMA(closedPrices.slice(-MA5_PERIOD), MA5_PERIOD);
+    const ma10_1m = calculateSMA(closedPrices.slice(-MA10_PERIOD), MA10_PERIOD);
+    if (!(ma5_1m > ma10_1m)) return null;
+
     const displacement = currentPrice / ma20_1m;
     // 이격도 상한 체크
     if (displacement > STRATEGY_D_DISPLACEMENT_MAX) return null;
-    // 이격도 하한 체크 (너무 가까이서 진입 시 노이즈 손절 방지)
+    // 이격도 하한 체크 (MA20에서 충분히 이격된 상태에서만 진입)
     if (displacement < STRATEGY_D_DISPLACEMENT_MIN) return null;
 
     logger.info(
       LOG_SOURCE,
-      "[시그널] %s | 매수 조건 충족 | 가격 %s | MA20_1m %s | 이격도 %s",
+      "[시그널] %s | 매수 조건 충족 | 가격 %s | MA20_1m %s | 이격도 %s | RSI %s→%s",
       market,
       currentPrice.toFixed(0),
       ma20_1m.toFixed(0),
       displacement.toFixed(4),
+      rsiPrev.toFixed(1),
+      rsiCur.toFixed(1),
     );
     return {
       shouldBuy: true,
-      reason: "전략D: 정배열+RSI60상향+거래량150%+이격도2%이내",
+      reason: "전략D: 정배열+1분봉정배열+RSI60상향+거래량150%+이격도범위",
       strategy: "D",
     };
   } catch (e) {
@@ -138,6 +150,26 @@ export const checkSellSignalD = (
         shouldSell: true,
         reason: `전략D 손절 (순수익 ${netProfitPct.toFixed(2)}%)`,
       };
+    }
+
+    // 1-1. 방안 C: 소수익 보호 트레일링 스톱
+    // 순수익이 한 번이라도 활성화 임계(0.3%) 이상 도달했다면, 고점 대비 0.4%p 하락 시 청산
+    // maxNetPct 는 index.ts 에서 모든 전략 공통으로 자동 갱신됨 (types.ts 변경 불필요)
+    if (position.maxNetPct >= STRATEGY_D_TRAILING_ACTIVATE_PCT) {
+      const trailingDropPct = position.maxNetPct - netProfitPct;
+      if (trailingDropPct >= STRATEGY_D_TRAILING_OFFSET_PCT) {
+        logger.info(
+          LOG_SOURCE,
+          "[시그널] %s | 트레일링 스톱 (고점 %s%% → 현재 %s%%)",
+          market,
+          position.maxNetPct.toFixed(2),
+          netProfitPct.toFixed(2),
+        );
+        return {
+          shouldSell: true,
+          reason: `전략D 트레일링 스톱 (고점 ${position.maxNetPct.toFixed(2)}% → 현재 ${netProfitPct.toFixed(2)}%)`,
+        };
+      }
     }
 
     // 최대 보유 시간 체크
