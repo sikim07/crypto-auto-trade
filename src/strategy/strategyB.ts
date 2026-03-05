@@ -1,6 +1,13 @@
 import { getCandles, minuteStart } from "../data/candleWindow";
 import { calculateRSI, calculateMACD } from "../indicators";
-import { RSI_PERIOD, MACD_SLOW, MACD_SIGNAL } from "../config";
+import {
+  RSI_PERIOD,
+  MACD_SLOW,
+  MACD_SIGNAL,
+  COST_PCT,
+  STRATEGY_B_STOP_LOSS_PCT,
+  STRATEGY_B_MAX_HOLD_MINUTES,
+} from "../config";
 import type { BuySignalResult, SellSignalResult } from "./signal";
 import type { BotPosition } from "../types";
 import { logger } from "../logger";
@@ -20,6 +27,12 @@ function getClosed1mCandles(market: string): UpbitCandle[] {
   }
   return candles;
 }
+
+/** 순수익률 (비용 차감) */
+const getNetProfitPct = (buyPrice: number, currentPrice: number): number => {
+  const raw = ((currentPrice - buyPrice) / buyPrice) * 100;
+  return raw - COST_PCT;
+};
 
 const RSI_50 = 50;
 const RSI_40_DIVERGENCE = 40;
@@ -123,12 +136,42 @@ export const checkBuySignalB = (
   }
 };
 
-/** 전략 B 매도: 익절 RSI 70 하향 돌파, 손절 MACD 데드크로스+RSI 50 미만(확인된 반전). 1분봉은 마감된 봉만 사용. */
+/** 전략 B 매도: 하드 손절 → 최대 보유 시간 → MACD 데드크로스+RSI 50 미만 손절 → RSI 70 하향 익절. 1분봉은 마감된 봉만 사용. */
 export const checkSellSignalB = (
   market: string,
   position: BotPosition,
   currentPrice: number,
 ): SellSignalResult => {
+  const netPct = getNetProfitPct(position.buyPrice, currentPrice);
+
+  if (netPct <= STRATEGY_B_STOP_LOSS_PCT) {
+    logger.info(
+      LOG_SOURCE,
+      "[시그널] %s | 손절 (순수익 %s%%)",
+      market,
+      netPct.toFixed(2),
+    );
+    return {
+      shouldSell: true,
+      reason: `전략B 손절 (순수익 ${netPct.toFixed(2)}%)`,
+    };
+  }
+
+  const holdMin = (Date.now() - position.buyTime) / 60_000;
+  if (holdMin >= STRATEGY_B_MAX_HOLD_MINUTES) {
+    logger.info(
+      LOG_SOURCE,
+      "[시그널] %s | 최대 보유시간 초과 (%s분, 순수익 %s%%)",
+      market,
+      holdMin.toFixed(0),
+      netPct.toFixed(2),
+    );
+    return {
+      shouldSell: true,
+      reason: `전략B 최대 보유시간 초과 (${holdMin.toFixed(0)}분, 순수익 ${netPct.toFixed(2)}%)`,
+    };
+  }
+
   const candles1m = getClosed1mCandles(market);
   const prices = pricesFromCandles(candles1m);
   let rsiCur: number | undefined;

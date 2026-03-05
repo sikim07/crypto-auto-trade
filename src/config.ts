@@ -97,6 +97,10 @@ export const STRATEGY_A_BB_ENTRY_BUFFER = 1.01;
 /** 전략 A 인트라캔들 RSI 조기 진입 임계값 — 마감봉 30보다 높게 설정해 노이즈 방지 */
 export const STRATEGY_A_RSI_INTRACANDLE_THRESHOLD = 31;
 
+/** 전략 B: 멀티타임프레임 MACD+RSI 모멘텀 — 손절, 최대 보유 */
+export const STRATEGY_B_STOP_LOSS_PCT = -1.5;
+export const STRATEGY_B_MAX_HOLD_MINUTES = 12;
+
 /** 전략 C: 변동성 스퀴즈 — BB 폭 수축 상한, 거래량 비율, 몸통 비율, 트레일링, 손절, 최대 보유 */
 export const STRATEGY_C_BB_SQUEEZE_RATIO = 0.02;
 export const STRATEGY_C_VOLUME_RATIO = 2;
