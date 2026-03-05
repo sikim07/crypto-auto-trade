@@ -88,6 +88,14 @@ export const STRATEGY_A_RSI_OVERSOLD = 30;
 export const STRATEGY_A_VOLUME_AVG_PERIOD = 5;
 /** 전략 A 손절: 진입가 - (ATR × 이 배수) 도달 시 손절 */
 export const STRATEGY_A_ATR_STOP_MULTIPLIER = 1.5;
+/** 전략 A 손절: 매수가 기준 최소 손절 거리 (%) — 이 값보다 가까운 손절가는 강제로 내림 */
+export const STRATEGY_A_MIN_STOP_DISTANCE_PCT = 1.0;
+/** 전략 A 최대 보유 시간 (분) — 초과 시 BB 중앙 미도달이어도 현재가 청산 */
+export const STRATEGY_A_MAX_HOLD_MINUTES = 7;
+/** 전략 A 진입: BB 하단 기준 허용 버퍼 비율 — 1.01 = BB 하단 대비 1% 이내까지 허용 */
+export const STRATEGY_A_BB_ENTRY_BUFFER = 1.01;
+/** 전략 A 인트라캔들 RSI 조기 진입 임계값 — 마감봉 30보다 높게 설정해 노이즈 방지 */
+export const STRATEGY_A_RSI_INTRACANDLE_THRESHOLD = 31;
 
 /** 전략 C: 변동성 스퀴즈 — BB 폭 수축 상한, 거래량 비율, 몸통 비율, 트레일링, 손절, 최대 보유 */
 export const STRATEGY_C_BB_SQUEEZE_RATIO = 0.02;
