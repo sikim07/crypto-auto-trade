@@ -68,6 +68,11 @@ const lossCooldown: Record<string, number> = {};
 /** 전략 D 쿨다운 차단 로그 쓰로틀 (종목별 마지막 로그 시각) */
 const lossCooldownLastLog: Record<string, number> = {};
 
+/** 레짐 차단 로그: 급락/쿨다운 구간에 진입했는지 (시작/종료만 로그용) */
+let regimeBlockCrashingActive = false;
+/** 레짐 차단 로그: 패닉 볼륨 구간에 진입했는지 (시작/종료만 로그용) */
+let regimeBlockPanicVolumeActive = false;
+
 /** 매매기록 PM2 error 로그용 KST 타임스탬프 */
 const tradeLogTimestamp = (): string => {
   const d = new Date();
@@ -483,18 +488,32 @@ const run = async (): Promise<void> => {
 
       const regime = getMarketRegime();
       if (regime.crashing) {
-        logger.warn(
-          LOG_SOURCE,
-          "[레짐 차단] BTC 급락/쿨다운 중, 전략 무관 매수 중단",
-        );
+        if (!regimeBlockCrashingActive) {
+          regimeBlockCrashingActive = true;
+          logger.warn(
+            LOG_SOURCE,
+            "[레짐 차단] BTC 급락/쿨다운 중, 전략 무관 매수 중단 (시작)",
+          );
+        }
         return;
       }
+      if (regimeBlockCrashingActive) {
+        regimeBlockCrashingActive = false;
+        logger.warn(LOG_SOURCE, "[레짐 차단] BTC 급락/쿨다운 해제 (종료)");
+      }
       if (regime.panicVolume) {
-        logger.warn(
-          LOG_SOURCE,
-          "[레짐 차단] BTC 패닉 볼륨 감지, 전략 무관 매수 중단",
-        );
+        if (!regimeBlockPanicVolumeActive) {
+          regimeBlockPanicVolumeActive = true;
+          logger.warn(
+            LOG_SOURCE,
+            "[레짐 차단] BTC 패닉 볼륨 감지, 전략 무관 매수 중단 (시작)",
+          );
+        }
         return;
+      }
+      if (regimeBlockPanicVolumeActive) {
+        regimeBlockPanicVolumeActive = false;
+        logger.warn(LOG_SOURCE, "[레짐 차단] BTC 패닉 볼륨 해제 (종료)");
       }
 
       const buyB = checkBuySignalB(market, price);
