@@ -22,6 +22,10 @@ const append5mCandleFrom1m = (market: string, list1m: UpbitCandle[]): void => {
   const low = Math.min(...lastFive.map((c) => c.low_price));
   const close = lastFive[lastFive.length - 1].trade_price;
   const volume = lastFive.reduce((s, c) => s + c.candle_acc_trade_volume, 0);
+  const accTradePrice = lastFive.reduce(
+    (s, c) => s + c.candle_acc_trade_price,
+    0,
+  );
   const timestamp = lastFive[0].timestamp;
 
   const key5 = storageKey(market, 5);
@@ -35,7 +39,7 @@ const append5mCandleFrom1m = (market: string, list1m: UpbitCandle[]): void => {
     low_price: low,
     trade_price: close,
     timestamp,
-    candle_acc_trade_price: 0,
+    candle_acc_trade_price: accTradePrice,
     candle_acc_trade_volume: volume,
   };
   const next = [...list5, newCandle5].slice(-CANDLE_WINDOW_SIZE_5M);
@@ -80,6 +84,7 @@ export const updateFromTicker = (
     last.low_price = Math.min(last.low_price, tradePrice);
     if (tradeVolume !== undefined && tradeVolume > 0) {
       last.candle_acc_trade_volume += tradeVolume;
+      last.candle_acc_trade_price += tradePrice * tradeVolume;
     }
     return;
   }
@@ -93,7 +98,10 @@ export const updateFromTicker = (
     low_price: tradePrice,
     trade_price: tradePrice,
     timestamp: minStart,
-    candle_acc_trade_price: 0,
+    candle_acc_trade_price:
+      tradeVolume !== undefined && tradeVolume > 0
+        ? tradePrice * tradeVolume
+        : 0,
     candle_acc_trade_volume: tradeVolume ?? 0,
   };
   list = [...list, newCandle];

@@ -146,6 +146,21 @@ export const STRATEGY_E_VOLUME_AVG_PERIOD = 5;
 export const STRATEGY_E_VOLUME_EXCLUDE_RATIO = 2;
 export const STRATEGY_E_STOP_BELOW_LOWER_RATIO = 0.99;
 
+/** 전략 F: VWAP 눌림목 반등 */
+export const STRATEGY_F_EMA_PERIOD = 21;
+/** VWAP/EMA21 근접 허용 범위 (%) — 이 이내이면 눌림목 위치로 판단 */
+export const STRATEGY_F_PROXIMITY_PCT = 0.5;
+/** RSI 반등 돌파 기준선 — rsiPrev < 이 값 → rsiCur ≥ 이 값 */
+export const STRATEGY_F_RSI_CROSS = 40;
+/** 1분봉 VWAP 유효성 최소 당일 캔들 수 (30분 경과 보장) */
+export const STRATEGY_F_MIN_VWAP_CANDLES_1M = 30;
+/** 5분봉 VWAP 유효성 최소 당일 캔들 수 (5분봉 6개 = 30분 경과 보장) */
+export const STRATEGY_F_MIN_VWAP_CANDLES_5M = 6;
+export const STRATEGY_F_STOP_LOSS_PCT = -1.5;
+export const STRATEGY_F_MAX_HOLD_MINUTES = 15;
+export const STRATEGY_F_TRAILING_ACTIVATE_PCT = 1.0;
+export const STRATEGY_F_TRAILING_OFFSET_PCT = 0.5;
+
 /** 레짐: 하드 차단만 (급락·패닉 시 매수 중단, downtrend+RS 미사용) */
 /** 급락 감지 lookback (5분봉 개수, 6개 = 30분) */
 export const REGIME_CRASH_LOOKBACK = 6;

@@ -15,6 +15,7 @@ import { checkSellSignalB } from "./strategy/strategyB";
 import { checkBuySignalC, checkSellSignalC } from "./strategy/strategyC";
 import { checkBuySignalD, checkSellSignalD } from "./strategy/strategyD";
 import { checkBuySignalE, checkSellSignalE } from "./strategy/strategyE";
+import { checkBuySignalF, checkSellSignalF } from "./strategy/strategyF";
 import {
   executeMarketBuy,
   executeMarketSell,
@@ -325,6 +326,8 @@ const run = async (): Promise<void> => {
           sellSignal = checkSellSignalD(position.market, position, price);
         } else if (position.strategy === "E") {
           sellSignal = checkSellSignalE(position.market, position, price);
+        } else if (position.strategy === "F") {
+          sellSignal = checkSellSignalF(position.market, position, price);
         } else {
           sellSignal = checkSellSignal(
             position.market,
@@ -400,7 +403,7 @@ const run = async (): Promise<void> => {
                 dailyProfitStr,
                 String(dailyTradeCount),
               );
-              const strategyParts = (["A", "B", "C", "D", "E"] as const)
+              const strategyParts = (["A", "B", "C", "D", "E", "F"] as const)
                 .filter((s) => strategyCumulativePct[s] != null)
                 .map((s) => {
                   const pct = strategyCumulativePct[s];
@@ -536,7 +539,15 @@ const run = async (): Promise<void> => {
         buyB?.shouldBuy || buyA?.shouldBuy || buyC?.shouldBuy || buyD?.shouldBuy
           ? null
           : checkBuySignalE(market, price);
-      const buySignal = buyB ?? buyA ?? buyC ?? buyD ?? buyE;
+      const buyF =
+        buyB?.shouldBuy ||
+        buyA?.shouldBuy ||
+        buyC?.shouldBuy ||
+        buyD?.shouldBuy ||
+        buyE?.shouldBuy
+          ? null
+          : checkBuySignalF(market, price);
+      const buySignal = buyB ?? buyA ?? buyC ?? buyD ?? buyE ?? buyF;
       if (!buySignal?.shouldBuy) return;
       isBuying = true;
       const strategy = buySignal.strategy ?? undefined;
@@ -590,14 +601,14 @@ const run = async (): Promise<void> => {
           const buyTimeMs = Date.now();
           let entryLow: number | undefined;
           let entryAtr: number | undefined;
-          if (strategy === "A") {
+          if (strategy === "A" || strategy === "F") {
             const candles1m = getCandles(market, 1);
             const entryMinuteStart = minuteStart(buyTimeMs);
             const entryCandle = candles1m.find(
               (c) => c.timestamp === entryMinuteStart,
             );
             if (entryCandle) entryLow = entryCandle.low_price;
-            if (candles1m.length >= 15) {
+            if (strategy === "A" && candles1m.length >= 15) {
               const highs = candles1m.slice(-15).map((c) => c.high_price);
               const lows = candles1m.slice(-15).map((c) => c.low_price);
               const closes = candles1m.slice(-15).map((c) => c.trade_price);

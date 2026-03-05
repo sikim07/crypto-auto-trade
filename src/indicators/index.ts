@@ -119,6 +119,13 @@ const emaOne = (prices: number[], period: number): number => {
   return ema;
 };
 
+/** EMA 단일 값 (배열 끝 기준). emaOne의 공개 래퍼 */
+export const calculateEMA = (prices: number[], period: number): number => {
+  if (prices.length < period)
+    throw new Error(`EMA: need ${period}, got ${prices.length}`);
+  return emaOne(prices, period);
+};
+
 export const calculateMACD = (
   prices: number[],
   fast: number = MACD_FAST,
