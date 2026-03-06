@@ -31,6 +31,7 @@ import {
   DAILY_MAX_LOSS_PCT,
   STRATEGY_C_TRAILING_ACTIVATE_PCT,
   STRATEGY_D_LOSS_COOLDOWN_MS,
+  STRATEGY_F_COOLDOWN_MS,
 } from "./config";
 import { logger } from "./logger";
 import { writeTradeLog, tradeLogPath } from "./tradeLogger";
@@ -67,6 +68,10 @@ const lastPrices: Record<string, number> = {};
 const lossCooldown: Record<string, number> = {};
 /** 전략 D 쿨다운 차단 로그 쓰로틀 (종목별 마지막 로그 시각) */
 const lossCooldownLastLog: Record<string, number> = {};
+/** 전략 F 매도 종목 쿨다운 (종목별 F 매도 시각) */
+const strategyFCooldown: Record<string, number> = {};
+/** 전략 F 쿨다운 차단 로그 쓰로틀 (종목별 마지막 로그 시각) */
+const strategyFCooldownLastLog: Record<string, number> = {};
 
 /** 레짐 차단 로그: 급락/쿨다운 구간에 진입했는지 (시작/종료만 로그용) */
 let regimeBlockCrashingActive = false;
@@ -392,6 +397,15 @@ const run = async (): Promise<void> => {
                   finalNetPct.toFixed(2),
                 );
               }
+              // 전략 F 매도 종목 쿨다운 등록 (손실/익절 무관)
+              if (strategyTag === "F") {
+                strategyFCooldown[position.market] = Date.now();
+                logger.info(
+                  LOG_SOURCE,
+                  "[쿨다운] 전략F 종목 등록: %s",
+                  position.market,
+                );
+              }
               const tradeProfitStr =
                 tradeProfitKrw >= 0
                   ? `+${Math.round(tradeProfitKrw).toLocaleString()}원`
@@ -566,14 +580,42 @@ const run = async (): Promise<void> => {
         buyB?.shouldBuy || buyA?.shouldBuy || buyC?.shouldBuy || buyD?.shouldBuy
           ? null
           : checkBuySignalE(market, price);
-      const buyF =
-        buyB?.shouldBuy ||
-        buyA?.shouldBuy ||
-        buyC?.shouldBuy ||
-        buyD?.shouldBuy ||
-        buyE?.shouldBuy
-          ? null
-          : checkBuySignalF(market, price);
+      // 전략 F 쿨다운 체크 후 F 매수 신호 검사
+      let buyF: ReturnType<typeof checkBuySignalF> = null;
+      if (
+        !buyB?.shouldBuy &&
+        !buyA?.shouldBuy &&
+        !buyC?.shouldBuy &&
+        !buyD?.shouldBuy &&
+        !buyE?.shouldBuy
+      ) {
+        const fCooldownTime = strategyFCooldown[market];
+        if (
+          fCooldownTime &&
+          Date.now() - fCooldownTime < STRATEGY_F_COOLDOWN_MS
+        ) {
+          const now = Date.now();
+          const lastLog = strategyFCooldownLastLog[market] ?? 0;
+          if (now - lastLog >= 5 * 60_000) {
+            const remainingMin = Math.ceil(
+              (STRATEGY_F_COOLDOWN_MS - (now - fCooldownTime)) / 60_000,
+            );
+            logger.debug(
+              LOG_SOURCE,
+              "[쿨다운] 전략F 진입 차단: %s (남은 시간 %s분)",
+              market,
+              remainingMin,
+            );
+            strategyFCooldownLastLog[market] = now;
+          }
+        } else {
+          if (fCooldownTime) {
+            delete strategyFCooldown[market];
+            delete strategyFCooldownLastLog[market];
+          }
+          buyF = checkBuySignalF(market, price);
+        }
+      }
       const buySignal = buyB ?? buyA ?? buyC ?? buyD ?? buyE ?? buyF;
       if (!buySignal?.shouldBuy) return;
       isBuying = true;

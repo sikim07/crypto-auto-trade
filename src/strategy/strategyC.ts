@@ -81,7 +81,7 @@ export const checkBuySignalC = (
 
     logger.info(
       LOG_SOURCE,
-      "[시그널] %s | 매수 조건 충족 | 가격 %s | BB수축+상단돌파+거래량%.0f%%",
+      "[시그널] %s | 매수 조건 충족 | 가격 %s | BB수축+상단돌파+거래량 %s",
       market,
       currentPrice.toFixed(0),
       volRatio * 100,

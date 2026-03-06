@@ -12,6 +12,7 @@ import {
   STRATEGY_F_TRAILING_ACTIVATE_PCT,
   STRATEGY_F_TRAILING_OFFSET_PCT,
   STRATEGY_F_ENTRY_BREACH_PCT,
+  STRATEGY_F_ENTRY_BREACH_GRACE_SEC,
   COST_PCT,
 } from "../config";
 import type { BuySignalResult, SellSignalResult } from "./signal";
@@ -181,28 +182,31 @@ export const checkSellSignalF = (
       };
     }
 
-    // 2. 진입 수준 이탈 (진입가 대비 -ENTRY_BREACH_PCT% 이하)
-    const entryBreachPrice =
-      position.buyPrice * (1 - STRATEGY_F_ENTRY_BREACH_PCT / 100);
-    if (currentPrice < entryBreachPrice) {
-      logger.info(
-        LOG_SOURCE,
-        "[시그널] %s | 손절 (진입 수준 이탈) 현재가 %s < 진입가대비 %s%% 이하",
-        market,
-        currentPrice.toFixed(0),
-        STRATEGY_F_ENTRY_BREACH_PCT,
-      );
-      logger.info(
-        LOG_SOURCE,
-        "[BT] F 매도 type=진입이탈 price=%s breachPct=%s netPct=%s",
-        currentPrice.toFixed(0),
-        String(STRATEGY_F_ENTRY_BREACH_PCT),
-        netPct.toFixed(2),
-      );
-      return {
-        shouldSell: true,
-        reason: `전략F 손절 (진입 수준 이탈 현재가 ${currentPrice.toFixed(0)} < 진입가대비 ${STRATEGY_F_ENTRY_BREACH_PCT}% 이하)`,
-      };
+    // 2. 진입 수준 이탈 (진입가 대비 -ENTRY_BREACH_PCT% 이하, 유예 시간 경과 후만 적용)
+    const holdMs = Date.now() - position.buyTime;
+    if (holdMs >= STRATEGY_F_ENTRY_BREACH_GRACE_SEC * 1000) {
+      const entryBreachPrice =
+        position.buyPrice * (1 - STRATEGY_F_ENTRY_BREACH_PCT / 100);
+      if (currentPrice < entryBreachPrice) {
+        logger.info(
+          LOG_SOURCE,
+          "[시그널] %s | 손절 (진입 수준 이탈) 현재가 %s < 진입가대비 %s%% 이하",
+          market,
+          currentPrice.toFixed(0),
+          STRATEGY_F_ENTRY_BREACH_PCT,
+        );
+        logger.info(
+          LOG_SOURCE,
+          "[BT] F 매도 type=진입이탈 price=%s breachPct=%s netPct=%s",
+          currentPrice.toFixed(0),
+          String(STRATEGY_F_ENTRY_BREACH_PCT),
+          netPct.toFixed(2),
+        );
+        return {
+          shouldSell: true,
+          reason: `전략F 손절 (진입 수준 이탈 현재가 ${currentPrice.toFixed(0)} < 진입가대비 ${STRATEGY_F_ENTRY_BREACH_PCT}% 이하)`,
+        };
+      }
     }
 
     // 3. VWAP 붕괴: 현재가 < VWAP_1m 또는 마감봉 종가 < VWAP_1m

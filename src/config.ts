@@ -149,9 +149,9 @@ export const STRATEGY_E_STOP_BELOW_LOWER_RATIO = 0.99;
 /** 전략 F: VWAP 눌림목 반등 */
 export const STRATEGY_F_EMA_PERIOD = 21;
 /** VWAP/EMA21 근접 허용 범위 (%) — 이 이내이면 눌림목 위치로 판단 */
-export const STRATEGY_F_PROXIMITY_PCT = 0.5;
+export const STRATEGY_F_PROXIMITY_PCT = 0.4;
 /** RSI 반등 돌파 기준선 — rsiPrev < 이 값 → rsiCur ≥ 이 값 */
-export const STRATEGY_F_RSI_CROSS = 40;
+export const STRATEGY_F_RSI_CROSS = 42;
 /** 1분봉 VWAP 유효성 최소 당일 캔들 수 (30분 경과 보장) */
 export const STRATEGY_F_MIN_VWAP_CANDLES_1M = 30;
 /** 5분봉 VWAP 유효성 최소 당일 캔들 수 (5분봉 6개 = 30분 경과 보장) */
@@ -161,7 +161,11 @@ export const STRATEGY_F_MAX_HOLD_MINUTES = 15;
 export const STRATEGY_F_TRAILING_ACTIVATE_PCT = 1.0;
 export const STRATEGY_F_TRAILING_OFFSET_PCT = 0.5;
 /** 진입가 대비 이 % 이하로 떨어지면 진입 수준 이탈 손절 (진입봉 저가 대신 사용) */
-export const STRATEGY_F_ENTRY_BREACH_PCT = 0.3;
+export const STRATEGY_F_ENTRY_BREACH_PCT = 0.4;
+/** 진입 후 이 초 동안은 진입 수준 이탈 손절 미적용 */
+export const STRATEGY_F_ENTRY_BREACH_GRACE_SEC = 90;
+/** F 매도 후 같은 종목 F 재진입 차단 시간(ms) */
+export const STRATEGY_F_COOLDOWN_MS = 5 * 60 * 1000;
 
 /** 레짐: 하드 차단만 (급락·패닉 시 매수 중단, downtrend+RS 미사용) */
 /** 급락 감지 lookback (5분봉 개수, 6개 = 30분) */
