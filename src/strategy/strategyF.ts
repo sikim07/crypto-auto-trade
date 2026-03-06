@@ -1,5 +1,5 @@
 import { getCandles } from "../data/candleWindow";
-import { calculateRSI, calculateEMA } from "../indicators";
+import { calculateRSI, calculateEMA, getVolumeRatio } from "../indicators";
 import {
   RSI_PERIOD,
   STRATEGY_F_EMA_PERIOD,
@@ -14,6 +14,11 @@ import {
   STRATEGY_F_TRAILING_OFFSET_PCT,
   STRATEGY_F_ENTRY_BREACH_PCT,
   STRATEGY_F_ENTRY_BREACH_GRACE_SEC,
+  STRATEGY_F_VWAP_BUFFER_PCT,
+  STRATEGY_F_VOLUME_RATIO_MIN,
+  STRATEGY_F_VOLUME_AVG_PERIOD,
+  STRATEGY_F_TRAILING_TIGHTEN_THRESHOLD,
+  STRATEGY_F_TRAILING_TIGHTEN_OFFSET,
   COST_PCT,
 } from "../config";
 import type { BuySignalResult, SellSignalResult } from "./signal";
@@ -118,7 +123,7 @@ export const checkBuySignalF = (
     const proximityThreshold = anchor * (1 + STRATEGY_F_PROXIMITY_PCT / 100);
     if (currentPrice > proximityThreshold) return null;
 
-    // [조건 4] RSI 크로스(반등 당김: 38 사용 — 기존 42보다 이른 전환 포착)
+    // [조건 4] RSI 크로스(반등 당김: 40 사용 — 기존 38에서 상향 조정하여 진입 품질 개선)
     const rsiPrices = closedPrices.slice(-(RSI_PERIOD + 2));
     const rsiPrev = calculateRSI(rsiPrices.slice(0, -1));
     const rsiCur = calculateRSI(rsiPrices);
@@ -133,24 +138,53 @@ export const checkBuySignalF = (
       if (prevClosed.trade_price > prevClosed.opening_price) return null;
     }
 
+    // [조건 6] 거래량 필터: 현재 거래량이 직전 N개 봉 평균 대비 최소 비율 이상일 때만 진입
+    // 목적: 눌림목 반등 시 거래량 증가를 확인하여 허수 반등 진입 방지
+    // 이유: 거래량이 증가하지 않은 반등은 약한 반등일 가능성이 높음
+    if (volumes1m.length >= STRATEGY_F_VOLUME_AVG_PERIOD + 1) {
+      const currentVolume = volumes1m[volumes1m.length - 1];
+      const volumeRatio = getVolumeRatio(
+        currentVolume,
+        volumes1m,
+        STRATEGY_F_VOLUME_AVG_PERIOD,
+      );
+      if (volumeRatio < STRATEGY_F_VOLUME_RATIO_MIN) {
+        // 거래량 부족으로 진입 차단 (로그는 생략하여 노이즈 감소)
+        return null;
+      }
+    }
+
+    // 거래량 비율 계산 (로깅용)
+    let volumeRatio = 0;
+    if (volumes1m.length >= STRATEGY_F_VOLUME_AVG_PERIOD + 1) {
+      const currentVolume = volumes1m[volumes1m.length - 1];
+      volumeRatio = getVolumeRatio(
+        currentVolume,
+        volumes1m,
+        STRATEGY_F_VOLUME_AVG_PERIOD,
+      );
+    }
+
     logger.info(
       LOG_SOURCE,
-      "[시그널] %s | 매수 조건 충족 | 가격 %s | VWAP1m %s | EMA21 %s | RSI %s→%s",
+      "[시그널] %s | 매수 조건 충족 | 가격 %s | VWAP1m %s | EMA21 %s | RSI %s→%s | 거래량비율 %s",
       market,
       currentPrice.toFixed(0),
       vwap1m.toFixed(0),
       ema21.toFixed(0),
       rsiPrev.toFixed(1),
       rsiCur.toFixed(1),
+      volumeRatio.toFixed(2),
     );
     logger.info(
       LOG_SOURCE,
-      "[BT] F 매수 vwap1m=%s ema21=%s RSI=%s→%s proximityPct=%s price=%s",
+      "[BT] F 매수 vwap1m=%s ema21=%s RSI=%s→%s proximityPct=%s volRatio=%s price=%s",
       vwap1m.toFixed(0),
       ema21.toFixed(0),
       rsiPrev.toFixed(1),
       rsiCur.toFixed(1),
       String(STRATEGY_F_PROXIMITY_PCT),
+      volumeRatio.toFixed(2),
       currentPrice.toFixed(0),
     );
     return {
@@ -224,29 +258,38 @@ export const checkSellSignalF = (
       }
     }
 
-    // 3. VWAP 붕괴: 현재가 < VWAP_1m 또는 마감봉 종가 < VWAP_1m
+    // 3. VWAP 붕괴: 현재가 < VWAP_1m × (1 - VWAP_BUFFER_PCT/100) 또는 마감봉 종가 < VWAP_1m × (1 - VWAP_BUFFER_PCT/100)
+    // [개선] VWAP 버퍼 추가
+    // 목적: 일시적인 가격 하락(꼬리 달기, Under-shooting)에 대한 방어
+    // 이유: 로그 분석 결과 VWAP와 정확히 같거나 약간 하회하는 일시적 하락으로 즉시 손절되는 문제 발생
     const candles1m = getCandles(market, 1);
     if (candles1m.length > 0) {
       const vwap1m = calcVwap(candles1m, STRATEGY_F_MIN_VWAP_CANDLES_1M);
-      if (vwap1m > 0 && currentPrice < vwap1m) {
-        logger.info(
-          LOG_SOURCE,
-          "[시그널] %s | 손절 (VWAP 붕괴) 현재가 %s < VWAP %s",
-          market,
-          currentPrice.toFixed(0),
-          vwap1m.toFixed(0),
-        );
-        logger.info(
-          LOG_SOURCE,
-          "[BT] F 매도 type=VWAP붕괴 price=%s vwap1m=%s netPct=%s",
-          currentPrice.toFixed(0),
-          vwap1m.toFixed(0),
-          netPct.toFixed(2),
-        );
-        return {
-          shouldSell: true,
-          reason: `전략F 손절 (VWAP 붕괴 현재가 ${currentPrice.toFixed(0)} < ${vwap1m.toFixed(0)})`,
-        };
+      if (vwap1m > 0) {
+        const vwapBreachPrice = vwap1m * (1 - STRATEGY_F_VWAP_BUFFER_PCT / 100);
+        if (currentPrice < vwapBreachPrice) {
+          logger.info(
+            LOG_SOURCE,
+            "[시그널] %s | 손절 (VWAP 붕괴) 현재가 %s < VWAP버퍼 %s (VWAP %s)",
+            market,
+            currentPrice.toFixed(0),
+            vwapBreachPrice.toFixed(0),
+            vwap1m.toFixed(0),
+          );
+          logger.info(
+            LOG_SOURCE,
+            "[BT] F 매도 type=VWAP붕괴 price=%s vwap1m=%s vwapBreach=%s bufferPct=%s netPct=%s",
+            currentPrice.toFixed(0),
+            vwap1m.toFixed(0),
+            vwapBreachPrice.toFixed(0),
+            String(STRATEGY_F_VWAP_BUFFER_PCT),
+            netPct.toFixed(2),
+          );
+          return {
+            shouldSell: true,
+            reason: `전략F 손절 (VWAP 붕괴 현재가 ${currentPrice.toFixed(0)} < VWAP버퍼 ${vwapBreachPrice.toFixed(0)})`,
+          };
+        }
       }
       const volumes1m = volumesFromCandles(candles1m);
       const isCurrentCandleOpen =
@@ -254,52 +297,68 @@ export const checkSellSignalF = (
       const closedCandles = isCurrentCandleOpen
         ? candles1m.slice(0, -1)
         : candles1m;
-      if (closedCandles.length > 0) {
+      if (closedCandles.length > 0 && vwap1m > 0) {
+        const vwapBreachPrice = vwap1m * (1 - STRATEGY_F_VWAP_BUFFER_PCT / 100);
         const lastClose = closedCandles[closedCandles.length - 1].trade_price;
-        if (lastClose < vwap1m) {
+        if (lastClose < vwapBreachPrice) {
           logger.info(
             LOG_SOURCE,
-            "[시그널] %s | 손절 (VWAP 붕괴) 마감 종가 %s < VWAP %s",
+            "[시그널] %s | 손절 (VWAP 붕괴) 마감 종가 %s < VWAP버퍼 %s (VWAP %s)",
             market,
             lastClose.toFixed(0),
+            vwapBreachPrice.toFixed(0),
             vwap1m.toFixed(0),
           );
           logger.info(
             LOG_SOURCE,
-            "[BT] F 매도 type=VWAP붕괴(종가) close=%s vwap1m=%s netPct=%s",
+            "[BT] F 매도 type=VWAP붕괴(종가) close=%s vwap1m=%s vwapBreach=%s bufferPct=%s netPct=%s",
             lastClose.toFixed(0),
             vwap1m.toFixed(0),
+            vwapBreachPrice.toFixed(0),
+            String(STRATEGY_F_VWAP_BUFFER_PCT),
             netPct.toFixed(2),
           );
           return {
             shouldSell: true,
-            reason: `전략F 손절 (VWAP 붕괴 종가 ${lastClose.toFixed(0)} < ${vwap1m.toFixed(0)})`,
+            reason: `전략F 손절 (VWAP 붕괴 종가 ${lastClose.toFixed(0)} < VWAP버퍼 ${vwapBreachPrice.toFixed(0)})`,
           };
         }
       }
     }
 
     // 4. 트레일링 스톱 (D 방식 — maxNetPct 기반, index.ts에서 공통 갱신)
+    // [개선] 가변형 트레일링 스톱 도입
+    // 목적: 높은 수익 구간에서 수익 보존 강화
+    // 이유: 로그 분석 결과 최대 수익이 높을 때도 고정 오프셋으로 인해 수익이 많이 줄어드는 문제 발생
     if (position.maxNetPct >= STRATEGY_F_TRAILING_ACTIVATE_PCT) {
+      // 최대 수익이 타이트닝 기준을 돌파하면 오프셋을 좁혀 수익을 더 타이트하게 보존
+      const trailingOffset =
+        position.maxNetPct >= STRATEGY_F_TRAILING_TIGHTEN_THRESHOLD
+          ? STRATEGY_F_TRAILING_TIGHTEN_OFFSET
+          : STRATEGY_F_TRAILING_OFFSET_PCT;
       const trailingDropPct = position.maxNetPct - netPct;
-      if (trailingDropPct >= STRATEGY_F_TRAILING_OFFSET_PCT) {
+      if (trailingDropPct >= trailingOffset) {
         logger.info(
           LOG_SOURCE,
-          "[시그널] %s | 트레일링 스톱 (고점 %s%% → 현재 %s%%)",
+          "[시그널] %s | 트레일링 스톱 (고점 %s%% → 현재 %s%%, 오프셋 %s%%)",
           market,
           position.maxNetPct.toFixed(2),
           netPct.toFixed(2),
+          trailingOffset.toFixed(1),
         );
         logger.info(
           LOG_SOURCE,
-          "[BT] F 매도 type=트레일링 maxPct=%s curPct=%s offsetPct=%s",
+          "[BT] F 매도 type=트레일링 maxPct=%s curPct=%s offsetPct=%s tighten=%s",
           position.maxNetPct.toFixed(2),
           netPct.toFixed(2),
-          String(STRATEGY_F_TRAILING_OFFSET_PCT),
+          String(trailingOffset),
+          position.maxNetPct >= STRATEGY_F_TRAILING_TIGHTEN_THRESHOLD
+            ? "Y"
+            : "N",
         );
         return {
           shouldSell: true,
-          reason: `전략F 트레일링 스톱 (고점 ${position.maxNetPct.toFixed(2)}% → 현재 ${netPct.toFixed(2)}%)`,
+          reason: `전략F 트레일링 스톱 (고점 ${position.maxNetPct.toFixed(2)}% → 현재 ${netPct.toFixed(2)}%, 오프셋 ${trailingOffset.toFixed(1)}%)`,
         };
       }
     }

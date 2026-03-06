@@ -164,8 +164,14 @@ export const STRATEGY_F_PROXIMITY_PCT = 0.5;
 /**
  * RSI 반등 돌파 기준선 — rsiPrev < 이 값 → rsiCur ≥ 이 값.
  * 기존 42(반등 확인 후 진입). 반등 당김: 38 사용 — 모멘텀 상향 전환을 더 이른 시점에 포착.
+ * 
+ * [개선] 38 → 40으로 상향 조정 (보수적 설정)
+ * 목적: 너무 이른 진입으로 인한 허수 반등 진입 방지, 진입 품질 개선
+ * 이유: 로그 분석 결과 RSI 38 진입 시 진입이탈 손절이 빈번하게 발생.
+ *      40으로 상향하여 추세 전환의 확신이 더 생기는 구간에서 진입하도록 조정.
+ *      백테스트 후 필요시 42까지 상향 조정 가능.
  */
-export const STRATEGY_F_RSI_CROSS = 38;
+export const STRATEGY_F_RSI_CROSS = 40;
 /**
  * true: 직전 마감봉이 음봉 또는 도지(close ≤ open)일 때만 마감봉 양봉 인정 → "첫 반등 양봉"만 진입.
  * false: 마감봉 양봉이기만 하면 진입(기존). 반등 당김 시 true 권장.
@@ -179,12 +185,55 @@ export const STRATEGY_F_STOP_LOSS_PCT = -1.5;
 export const STRATEGY_F_MAX_HOLD_MINUTES = 15;
 export const STRATEGY_F_TRAILING_ACTIVATE_PCT = 1.0;
 export const STRATEGY_F_TRAILING_OFFSET_PCT = 0.5;
-/** 진입가 대비 이 % 이하로 떨어지면 진입 수준 이탈 손절 (진입봉 저가 대신 사용) */
-export const STRATEGY_F_ENTRY_BREACH_PCT = 0.4;
+/**
+ * 진입가 대비 이 % 이하로 떨어지면 진입 수준 이탈 손절 (진입봉 저가 대신 사용)
+ * 
+ * [개선] 0.4% → 0.7%로 완화 (보수적 설정)
+ * 목적: 정상적인 가격 변동성에 대한 여유를 주어 조기 손절 방지
+ * 이유: 로그 분석 결과 진입이탈 손절이 3회 발생(-0.77%, -0.65%, -0.77%).
+ *      0.4% 기준이 변동성 큰 시장에서 너무 좁아 정상 변동에도 손절되는 문제 발생.
+ *      0.7%로 완화하여 변동성 흡수 가능하도록 조정. 백테스트 후 필요시 0.8%까지 완화 가능.
+ */
+export const STRATEGY_F_ENTRY_BREACH_PCT = 0.7;
 /** 진입 후 이 초 동안은 진입 수준 이탈 손절 미적용 */
 export const STRATEGY_F_ENTRY_BREACH_GRACE_SEC = 90;
 /** F 매도 후 같은 종목 F 재진입 차단 시간(ms) */
 export const STRATEGY_F_COOLDOWN_MS = 5 * 60 * 1000;
+
+/**
+ * VWAP 붕괴 손절 버퍼 (%) — VWAP 대비 이 비율만큼 하락해야 VWAP 붕괴로 판단
+ * 
+ * [신규 추가] (보수적 설정)
+ * 목적: 일시적인 가격 하락(꼬리 달기, Under-shooting)에 대한 방어
+ * 이유: 로그 분석 결과 VWAP=69, 현재가=69로 즉시 손절되는 사례 발생.
+ *      VWAP와 정확히 같거나 약간 하회하는 일시적 하락을 허용하여 불필요한 손절 방지.
+ *      0.3% 버퍼로 설정. 백테스트 후 필요시 0.2% 또는 0.4%로 조정 가능.
+ */
+export const STRATEGY_F_VWAP_BUFFER_PCT = 0.3;
+
+/**
+ * 거래량 필터 최소 비율 — 1분봉 현재 거래량이 직전 N개 봉 평균 대비 이 비율 이상일 때만 진입
+ * 
+ * [신규 추가] (보수적 설정)
+ * 목적: 눌림목 반등 시 거래량 증가를 확인하여 허수 반등 진입 방지
+ * 이유: 거래량이 증가하지 않은 반등은 약한 반등일 가능성이 높음.
+ *      직전 3개 봉 평균 대비 1.2배 이상일 때만 진입하여 진입 품질 개선.
+ *      백테스트 후 필요시 1.0(필터 해제) 또는 1.5로 조정 가능.
+ */
+export const STRATEGY_F_VOLUME_RATIO_MIN = 1.2;
+export const STRATEGY_F_VOLUME_AVG_PERIOD = 3; // 직전 N개 봉 평균
+
+/**
+ * 트레일링 스톱 타이트닝 기준 (%) — 최대 수익이 이 값을 돌파하면 트레일링 스톱 오프셋을 타이트하게 조정
+ * 
+ * [신규 추가] (보수적 설정)
+ * 목적: 높은 수익 구간에서 수익 보존 강화
+ * 이유: 로그 분석 결과 AGLD가 최대 2.17%까지 갔으나 1.51%에서 매도됨(0.66% 하락).
+ *      최대 수익이 1.5%를 돌파하면 트레일링 오프셋을 0.5%에서 0.3%로 좁혀 수익을 더 타이트하게 보존.
+ *      백테스트 후 필요시 기준을 1.0% 또는 오프셋을 0.4%로 조정 가능.
+ */
+export const STRATEGY_F_TRAILING_TIGHTEN_THRESHOLD = 1.5;
+export const STRATEGY_F_TRAILING_TIGHTEN_OFFSET = 0.3;
 
 /** 레짐: 하드 차단만 (급락·패닉 시 매수 중단, downtrend+RS 미사용) */
 /** 급락 감지 lookback (5분봉 개수, 6개 = 30분) */
