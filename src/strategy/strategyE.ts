@@ -126,12 +126,12 @@ export const checkBuySignalE = (
     const volRatio = avgVol5 > 0 ? lastVol / avgVol5 : 0;
     logger.info(
       LOG_SOURCE,
-      "[시그널] %s | 매수 조건 충족 | 가격 %s | BB하단 %s | RSI %s | 거래량비 %.2f",
+      "[시그널] %s | 매수 조건 충족 | 가격 %s | BB하단 %s | RSI %s | 거래량비 %s",
       market,
       currentPrice.toFixed(0),
       bb1m.lower.toFixed(0),
       rsiCur.toFixed(1),
-      volRatio,
+      volRatio.toFixed(2),
     );
     logger.info(
       LOG_SOURCE,
