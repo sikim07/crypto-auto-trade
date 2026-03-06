@@ -84,6 +84,8 @@ export const TRAILING_STOP_OFFSET_PCT = 0.5;
 export const DAILY_MAX_LOSS_PCT = -5;
 
 /** 전략 A: 저점 정밀 타격 — RSI 과매도 기준, 거래량 평균 봉 수 */
+/** 역추세 전략 A: 하락장 진입 차단 — 5분봉 MA5 < MA20 이면 매수 스킵 (횡보/상승에서만 동작) */
+export const STRATEGY_A_AVOID_DOWNTEND = true;
 export const STRATEGY_A_RSI_OVERSOLD = 30;
 export const STRATEGY_A_VOLUME_AVG_PERIOD = 5;
 /** 전략 A 손절: 진입가 - (ATR × 이 배수) 도달 시 손절 */
@@ -103,7 +105,8 @@ export const STRATEGY_B_MAX_HOLD_MINUTES = 12;
 
 /** 전략 C: 변동성 스퀴즈 — BB 폭 수축 상한, 거래량 비율, 몸통 비율, 트레일링, 손절, 최대 보유 */
 export const STRATEGY_C_BB_SQUEEZE_RATIO = 0.02;
-export const STRATEGY_C_VOLUME_RATIO = 2;
+/** 직전 평균 대비 이 배수 이상일 때만 진입 (2.5 = 250%, 압도적 거래량 돌파 시에만) */
+export const STRATEGY_C_VOLUME_RATIO = 2.5;
 export const STRATEGY_C_VOLUME_AVG_PERIOD = 10;
 export const STRATEGY_C_BODY_RATIO_MIN = 0.6;
 export const STRATEGY_C_TRAILING_ACTIVATE_PCT = 2;
@@ -113,7 +116,8 @@ export const STRATEGY_C_MAX_HOLD_MINUTES = 20;
 
 /** 전략 D: 순추세 모멘텀 — RSI 상향 돌파, 이격도, MA 기간, 손절 */
 export const STRATEGY_D_RSI_CROSS = 60;
-export const STRATEGY_D_VOLUME_RATIO = 1.5;
+/** 직전 평균 대비 이 배수 초과일 때만 진입 (2 = 200%, 압도적 거래량 시에만) */
+export const STRATEGY_D_VOLUME_RATIO = 2;
 export const STRATEGY_D_VOLUME_AVG_PERIOD = 5;
 export const STRATEGY_D_DISPLACEMENT_MAX = 1.02;
 /** 전략 D 이격도 최소값 — MA20 대비 이 비율 이상이어야 진입 (노이즈 청산 허용 범위 확보) */
@@ -140,6 +144,8 @@ export const STRATEGY_D_RSI_MIN_CROSS_STRENGTH = 3;
 export const STRATEGY_D_RSI_MAX = 75;
 
 /** 전략 E: 박스권 — BB 폭, 수평 기울기, RSI, 거래량 제외, 손절 */
+/** 역추세 전략 E: 하락장 진입 차단 — 5분봉 MA5 < MA20 이면 매수 스킵 (횡보에서만 동작) */
+export const STRATEGY_E_AVOID_DOWNTEND = true;
 export const STRATEGY_E_BB_WIDTH_LOOKBACK = 100;
 export const STRATEGY_E_SLOPE_THRESHOLD_RATIO = 0.0002;
 export const STRATEGY_E_BB_SLOPE_LOOKBACK = 20;

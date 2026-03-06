@@ -8,6 +8,7 @@ import {
 import {
   BB_PERIOD,
   RSI_PERIOD,
+  STRATEGY_A_AVOID_DOWNTEND,
   STRATEGY_A_RSI_OVERSOLD,
   STRATEGY_A_VOLUME_AVG_PERIOD,
   STRATEGY_A_ATR_STOP_MULTIPLIER,
@@ -27,6 +28,8 @@ const volumesFromCandles = (
   candles: { candle_acc_trade_volume: number }[],
 ): number[] => candles.map((c) => c.candle_acc_trade_volume);
 const MA200_PERIOD = 200;
+const MA5_5M_PERIOD = 5;
+const MA20_5M_PERIOD = 20;
 
 /** 전략 A 매수: 5분봉 가격 > MA200, 1분봉 BB 하단 + RSI<30 + 거래량>5봉평균, RSI 30 상향 돌파 */
 export const checkBuySignalA = (
@@ -46,12 +49,28 @@ export const checkBuySignalA = (
     if (lastClose5m <= ma200) return null;
 
     // Phase 3: 단기 추세 필터 — MA200(장기) 위이면서 MA20(단기)도 위여야 당일 하락 추세 배제
-    const MA20_5M_PERIOD = 20;
     const ma20_5m = calculateSMA(
       prices5m.slice(-MA20_5M_PERIOD),
       MA20_5M_PERIOD,
     );
     if (lastClose5m <= ma20_5m) return null;
+
+    // 역추세: 하락장 진입 차단 — 5분봉 MA5 < MA20 이면 횡보가 아니므로 스킵
+    if (STRATEGY_A_AVOID_DOWNTEND) {
+      const ma5_5m = calculateSMA(
+        prices5m.slice(-MA5_5M_PERIOD),
+        MA5_5M_PERIOD,
+      );
+      if (ma5_5m < ma20_5m) {
+        logger.info(
+          LOG_SOURCE,
+          "[BT] A 매수 스킵 하락추세(MA5<MA20) ma5=%s ma20=%s",
+          ma5_5m.toFixed(2),
+          ma20_5m.toFixed(2),
+        );
+        return null;
+      }
+    }
 
     const prices1m = pricesFromCandles(candles1m);
     const volumes1m = volumesFromCandles(candles1m);

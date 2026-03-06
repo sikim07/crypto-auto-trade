@@ -77,7 +77,15 @@ export const checkBuySignalC = (
       prevVols,
       STRATEGY_C_VOLUME_AVG_PERIOD,
     );
-    if (volRatio < STRATEGY_C_VOLUME_RATIO) return null;
+    if (volRatio < STRATEGY_C_VOLUME_RATIO) {
+      logger.info(
+        LOG_SOURCE,
+        "[BT] C 매수 스킵 거래량부족 volRatio=%s 필요=%s",
+        volRatio.toFixed(2),
+        String(STRATEGY_C_VOLUME_RATIO),
+      );
+      return null;
+    }
 
     logger.info(
       LOG_SOURCE,
@@ -96,7 +104,7 @@ export const checkBuySignalC = (
     );
     return {
       shouldBuy: true,
-      reason: "전략C: BB수축+상단돌파+거래량200%+몸통비",
+      reason: "전략C: BB수축+상단돌파+거래량(배수)+몸통비",
       strategy: "C",
     };
   } catch (e) {

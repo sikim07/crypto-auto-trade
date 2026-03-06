@@ -95,7 +95,15 @@ export const checkBuySignalD = (
       prevVols,
       STRATEGY_D_VOLUME_AVG_PERIOD,
     );
-    if (volRatio <= STRATEGY_D_VOLUME_RATIO) return null;
+    if (volRatio <= STRATEGY_D_VOLUME_RATIO) {
+      logger.info(
+        LOG_SOURCE,
+        "[BT] D 매수 스킵 거래량부족 volRatio=%s 필요=%s",
+        volRatio.toFixed(2),
+        String(STRATEGY_D_VOLUME_RATIO),
+      );
+      return null;
+    }
 
     // 저가 코인 필터
     if (currentPrice < STRATEGY_D_MIN_PRICE) return null;
@@ -135,7 +143,7 @@ export const checkBuySignalD = (
     );
     return {
       shouldBuy: true,
-      reason: "전략D: 정배열+1분봉정배열+RSI60상향+거래량150%+이격도범위",
+      reason: "전략D: 정배열+1분봉정배열+RSI60상향+거래량(배수)+이격도범위",
       strategy: "D",
     };
   } catch (e) {
