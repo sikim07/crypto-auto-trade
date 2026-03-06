@@ -21,6 +21,7 @@ import {
 import type { BuySignalResult, SellSignalResult } from "./signal";
 import type { BotPosition } from "../types";
 import { logger } from "../logger";
+import { shouldSkipDowntrend } from "./downtrendSkipState";
 
 const LOG_SOURCE = "strategyE";
 const pricesFromCandles = (candles: { trade_price: number }[]): number[] =>
@@ -81,21 +82,15 @@ export const checkBuySignalE = (
     if (Math.abs(slope) >= midPrice * STRATEGY_E_SLOPE_THRESHOLD_RATIO)
       return null;
 
-    // 역추세: 하락장 진입 차단 — 5분봉 MA5 < MA20 이면 횡보가 아니므로 스킵
+    // 역추세: 하락장 진입 차단 — 5분봉 MA5 < MA20 이면 횡보가 아니므로 스킵 (A·E 공통, 로그 합침)
     const MA5_5M = 5;
     const MA20_5M = 20;
     if (STRATEGY_E_AVOID_DOWNTEND && prices5m.length >= MA20_5M) {
       const ma5_5m = calculateSMA(prices5m.slice(-MA5_5M), MA5_5M);
       const ma20_5m = calculateSMA(prices5m.slice(-MA20_5M), MA20_5M);
-      if (ma5_5m < ma20_5m) {
-        logger.info(
-          LOG_SOURCE,
-          "[BT] E 매수 스킵 하락추세(MA5<MA20) ma5=%s ma20=%s",
-          ma5_5m.toFixed(2),
-          ma20_5m.toFixed(2),
-        );
+      const isDowntrend = ma5_5m < ma20_5m;
+      if (shouldSkipDowntrend(market, isDowntrend, ma5_5m, ma20_5m))
         return null;
-      }
     }
 
     const prices1m = pricesFromCandles(candles1m);
