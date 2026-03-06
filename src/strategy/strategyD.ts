@@ -3,6 +3,7 @@ import { calculateRSI, getVolumeRatio, calculateSMA } from "../indicators";
 import {
   RSI_PERIOD,
   STRATEGY_D_RSI_CROSS,
+  STRATEGY_D_RSI_MAX,
   STRATEGY_D_RSI_MIN_CROSS_STRENGTH,
   STRATEGY_D_VOLUME_RATIO,
   STRATEGY_D_VOLUME_AVG_PERIOD,
@@ -76,6 +77,16 @@ export const checkBuySignalD = (
       return null;
     // 방안 B: 단순 경계 터치(예: 59→60)가 아닌 최소 3p 이상 상향 돌파만 유효 신호로 인정
     if (rsiCur - rsiPrev < STRATEGY_D_RSI_MIN_CROSS_STRENGTH) return null;
+    // 과매수 구간 진입 차단: RSI가 상한(75) 초과 시 매수하지 않음. 과열 끝물 진입을 줄여 진입 직후 조정으로 인한 손절/휩쏘를 감소시키기 위함.
+    if (rsiCur > STRATEGY_D_RSI_MAX) {
+      logger.info(
+        LOG_SOURCE,
+        "[BT] D 매수 스킵 RSI상한초과 rsiCur=%s max=%s",
+        rsiCur.toFixed(1),
+        String(STRATEGY_D_RSI_MAX),
+      );
+      return null;
+    }
 
     const lastClosedVol = closedVolumes[closedVolumes.length - 1] ?? 0;
     const prevVols = closedVolumes.slice(0, -1);
@@ -168,7 +179,7 @@ export const checkSellSignalD = (
     }
 
     // 1-1. 방안 C: 소수익 보호 트레일링 스톱
-    // 순수익이 한 번이라도 활성화 임계(0.3%) 이상 도달했다면, 고점 대비 0.4%p 하락 시 청산
+    // 순수익이 한 번이라도 활성화 임계(STRATEGY_D_TRAILING_ACTIVATE_PCT) 이상 도달 시, 고점 대비 오프셋(STRATEGY_D_TRAILING_OFFSET_PCT) 하락 시 청산
     // maxNetPct 는 index.ts 에서 모든 전략 공통으로 자동 갱신됨 (types.ts 변경 불필요)
     if (position.maxNetPct >= STRATEGY_D_TRAILING_ACTIVATE_PCT) {
       const trailingDropPct = position.maxNetPct - netProfitPct;
@@ -224,31 +235,32 @@ export const checkSellSignalD = (
       volumes1m.length > 1 && volumes1m[volumes1m.length - 1] === 0;
     const closedPrices = isCurrentCandleOpen ? prices1m.slice(0, -1) : prices1m;
 
-    // 2. 추세 붕괴(현재가 < MA20 × (1 - 버퍼)): 수익률과 관계없이 즉시 매도
+    // 2. 추세 붕괴: MA20 이탈은 종가 기준으로만 판단. 봉 도중 꼬리만 닿았다가 복귀하는 휩쏘를 줄이고, 확정 이탈 시에만 손절하기 위함.
     if (closedPrices.length >= MA20_PERIOD) {
       const ma20_1m = calculateSMA(
         closedPrices.slice(-MA20_PERIOD),
         MA20_PERIOD,
       );
       const ma20BreakThreshold = ma20_1m * (1 - STRATEGY_D_MA20_BREAK_BUFFER);
-      if (currentPrice < ma20BreakThreshold) {
+      const lastClose = closedPrices[closedPrices.length - 1];
+      if (lastClose < ma20BreakThreshold) {
         logger.info(
           LOG_SOURCE,
-          "[시그널] %s | 손절 (가격 %s < MA20 버퍼 기준 %s)",
+          "[시그널] %s | 손절 (종가 기준 %s < MA20 버퍼 기준 %s)",
           market,
-          currentPrice.toFixed(0),
+          lastClose.toFixed(0),
           ma20BreakThreshold.toFixed(0),
         );
         logger.info(
           LOG_SOURCE,
-          "[BT] D 매도 type=MA20이탈 price=%s ma20Thr=%s netPct=%s",
-          currentPrice.toFixed(0),
+          "[BT] D 매도 type=MA20이탈 close=%s ma20Thr=%s netPct=%s",
+          lastClose.toFixed(0),
           ma20BreakThreshold.toFixed(0),
           netProfitPct.toFixed(2),
         );
         return {
           shouldSell: true,
-          reason: `전략D 손절 (가격 ${currentPrice.toFixed(0)} < MA20 버퍼 기준 ${ma20BreakThreshold.toFixed(0)})`,
+          reason: `전략D 손절 (종가 기준 ${lastClose.toFixed(0)} < MA20 버퍼 기준 ${ma20BreakThreshold.toFixed(0)})`,
         };
       }
     }

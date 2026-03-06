@@ -118,8 +118,8 @@ export const STRATEGY_D_VOLUME_AVG_PERIOD = 5;
 export const STRATEGY_D_DISPLACEMENT_MAX = 1.02;
 /** 전략 D 이격도 최소값 — MA20 대비 이 비율 이상이어야 진입 (노이즈 청산 허용 범위 확보) */
 export const STRATEGY_D_DISPLACEMENT_MIN = 1.008;
-/** 전략 D MA20 이탈 버퍼 — MA20 대비 이 비율만큼 하락해야 추세 붕괴로 판단 (정상 노이즈 청산 방지) */
-export const STRATEGY_D_MA20_BREAK_BUFFER = 0.005;
+/** 전략 D MA20 이탈 버퍼 — MA20 대비 이 비율만큼 하락해야 추세 붕괴로 판단. 0.008로 완화해 휩쏘 감소(진입 이격도 대비 과도한 손절 방지). */
+export const STRATEGY_D_MA20_BREAK_BUFFER = 0.008;
 /** 전략 D 최소 가격 — 이 가격 미만 코인은 진입 차단 (저가 코인 호가 단위 문제 방지) */
 export const STRATEGY_D_MIN_PRICE = 100;
 /** 전략 D 최대 보유 시간(분) — 초과 시 강제 매도 */
@@ -130,12 +130,14 @@ export const STRATEGY_D_MA_PERIODS = [5, 10, 20] as const;
 export const STRATEGY_D_STOP_LOSS_PCT = -1.5;
 /** MA5 하향 이탈 시 익절로 매도하려면 넘어야 할 최소 순수익률(%) — 수수료·슬리피지 안전 마진 */
 export const STRATEGY_D_MIN_PROFIT_BEFORE_MA5_EXIT = 0.5;
-/** 전략 D 소수익 보호 트레일링 스톱 활성화 임계(%) — 순수익이 이 값 이상 도달 시 트레일링 시작 */
-export const STRATEGY_D_TRAILING_ACTIVATE_PCT = 0.3;
-/** 전략 D 소수익 보호 트레일링 허용 낙폭(%p) — 고점 대비 이 값 이상 하락 시 청산 */
-export const STRATEGY_D_TRAILING_OFFSET_PCT = 0.4;
+/** 전략 D 소수익 보호 트레일링 스톱 활성화 임계(%) — 순수익이 이 값 이상 도달 시 트레일링 시작. 0.8로 상향해 1분봉 노이즈에 과도하게 걸리지 않게 하고, 손절 폭의 절반 이상 수익 확보 후 트레일링으로 손익비 개선 목적. */
+export const STRATEGY_D_TRAILING_ACTIVATE_PCT = 0.8;
+/** 전략 D 소수익 보호 트레일링 허용 낙폭(%p) — 고점 대비 이 값 이상 하락 시 청산. 0.5로 완화해 일시 조정에 덜 잘려나가도록. */
+export const STRATEGY_D_TRAILING_OFFSET_PCT = 0.5;
 /** 전략 D RSI 크로스 최소 강도 — rsiCur - rsiPrev 가 이 값 이상이어야 유효 돌파로 인정 */
 export const STRATEGY_D_RSI_MIN_CROSS_STRENGTH = 3;
+/** 전략 D RSI 상한 — 이 값 초과 시 매수하지 않음. 과매수 끝물 진입을 막아 진입 직후 조정으로 MA20 이탈/휩쏘에 휩쓸리는 비율 감소 목적. */
+export const STRATEGY_D_RSI_MAX = 75;
 
 /** 전략 E: 박스권 — BB 폭, 수평 기울기, RSI, 거래량 제외, 손절 */
 export const STRATEGY_E_BB_WIDTH_LOOKBACK = 100;
