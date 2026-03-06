@@ -154,12 +154,23 @@ export const STRATEGY_E_VOLUME_AVG_PERIOD = 5;
 export const STRATEGY_E_VOLUME_EXCLUDE_RATIO = 2;
 export const STRATEGY_E_STOP_BELOW_LOWER_RATIO = 0.99;
 
-/** 전략 F: VWAP 눌림목 반등 */
+/** 전략 F: VWAP 눌림목 반등 (반등 시점 당김 적용) */
 export const STRATEGY_F_EMA_PERIOD = 21;
-/** VWAP/EMA21 근접 허용 범위 (%) — 이 이내이면 눌림목 위치로 판단 */
-export const STRATEGY_F_PROXIMITY_PCT = 0.4;
-/** RSI 반등 돌파 기준선 — rsiPrev < 이 값 → rsiCur ≥ 이 값 */
-export const STRATEGY_F_RSI_CROSS = 42;
+/**
+ * VWAP/EMA21 근접 허용 범위 (%) — 이 이내이면 눌림목 위치로 판단.
+ * 기존 0.4. 반등 당김: 0.5로 완화해 지지 터치 직후 진입 여지 확대.
+ */
+export const STRATEGY_F_PROXIMITY_PCT = 0.5;
+/**
+ * RSI 반등 돌파 기준선 — rsiPrev < 이 값 → rsiCur ≥ 이 값.
+ * 기존 42(반등 확인 후 진입). 반등 당김: 38 사용 — 모멘텀 상향 전환을 더 이른 시점에 포착.
+ */
+export const STRATEGY_F_RSI_CROSS = 38;
+/**
+ * true: 직전 마감봉이 음봉 또는 도지(close ≤ open)일 때만 마감봉 양봉 인정 → "첫 반등 양봉"만 진입.
+ * false: 마감봉 양봉이기만 하면 진입(기존). 반등 당김 시 true 권장.
+ */
+export const STRATEGY_F_FIRST_GREEN_ONLY = true;
 /** 1분봉 VWAP 유효성 최소 당일 캔들 수 (30분 경과 보장) */
 export const STRATEGY_F_MIN_VWAP_CANDLES_1M = 30;
 /** 5분봉 VWAP 유효성 최소 당일 캔들 수 (5분봉 6개 = 30분 경과 보장) */

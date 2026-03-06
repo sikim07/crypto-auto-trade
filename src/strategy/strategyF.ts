@@ -5,6 +5,7 @@ import {
   STRATEGY_F_EMA_PERIOD,
   STRATEGY_F_PROXIMITY_PCT,
   STRATEGY_F_RSI_CROSS,
+  STRATEGY_F_FIRST_GREEN_ONLY,
   STRATEGY_F_MIN_VWAP_CANDLES_1M,
   STRATEGY_F_MIN_VWAP_CANDLES_5M,
   STRATEGY_F_STOP_LOSS_PCT,
@@ -58,7 +59,17 @@ const calcVwap = (candles: UpbitCandle[], minCandles: number): number => {
   return totalVolume > 0 ? totalPrice / totalVolume : 0;
 };
 
-/** 전략 F 매수: 5분봉 VWAP 위, 1분봉 VWAP+EMA21 위, 눌림목 위치, RSI 크로스, 마감봉 양봉 */
+/**
+ * 전략 F 매수: 5분봉 VWAP 위, 1분봉 VWAP+EMA21 위, 눌림목 위치, RSI 크로스, 마감봉 양봉.
+ *
+ * [기존 값 요약] RSI_CROSS=42, PROXIMITY_PCT=0.4, 마감봉 양봉만 확인.
+ * → 반등이 한 번 나온 직후에 진입해 상승 여력이 끊긴 뒤 진입 이탈 손절이 반복되는 문제.
+ *
+ * [반등 시점 당김 로직]
+ * - RSI_CROSS 42→38: 모멘텀 상향 전환을 더 이른 시점(RSI 38 상향 돌파)에 포착.
+ * - PROXIMITY_PCT 0.4→0.5: 눌림목 허용 범위 완화로 지지 터치 직후 진입 여지 확대.
+ * - FIRST_GREEN_ONLY: 직전 마감봉이 음봉/도지일 때만 현재 마감봉 양봉 인정 → "첫 반등 양봉"만 진입해, 이미 여러 봉 올라온 뒤 진입 방지.
+ */
 export const checkBuySignalF = (
   market: string,
   currentPrice: number,
@@ -107,16 +118,20 @@ export const checkBuySignalF = (
     const proximityThreshold = anchor * (1 + STRATEGY_F_PROXIMITY_PCT / 100);
     if (currentPrice > proximityThreshold) return null;
 
-    // [조건 4] RSI 크로스: rsiPrev < RSI_CROSS AND rsiCur ≥ RSI_CROSS
+    // [조건 4] RSI 크로스(반등 당김: 38 사용 — 기존 42보다 이른 전환 포착)
     const rsiPrices = closedPrices.slice(-(RSI_PERIOD + 2));
     const rsiPrev = calculateRSI(rsiPrices.slice(0, -1));
     const rsiCur = calculateRSI(rsiPrices);
     if (!(rsiPrev < STRATEGY_F_RSI_CROSS && rsiCur >= STRATEGY_F_RSI_CROSS))
       return null;
 
-    // [조건 5] 마감봉 양봉: close > open
+    // [조건 5] 마감봉 양봉: close > open. 반등 당김 시 FIRST_GREEN_ONLY면 직전봉 음봉/도지일 때만(첫 반등 양봉만)
     const lastClosed = closedCandles[closedCandles.length - 1];
     if (lastClosed.trade_price <= lastClosed.opening_price) return null;
+    if (STRATEGY_F_FIRST_GREEN_ONLY && closedCandles.length >= 2) {
+      const prevClosed = closedCandles[closedCandles.length - 2];
+      if (prevClosed.trade_price > prevClosed.opening_price) return null;
+    }
 
     logger.info(
       LOG_SOURCE,
