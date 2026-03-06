@@ -22,6 +22,7 @@ import {
 import type { BuySignalResult, SellSignalResult } from "./signal";
 import type { BotPosition } from "../types";
 import { logger } from "../logger";
+import { logVolumeSkipTransition } from "./volumeSkipState";
 
 const LOG_SOURCE = "strategyD";
 const pricesFromCandles = (candles: { trade_price: number }[]): number[] =>
@@ -96,14 +97,22 @@ export const checkBuySignalD = (
       STRATEGY_D_VOLUME_AVG_PERIOD,
     );
     if (volRatio <= STRATEGY_D_VOLUME_RATIO) {
-      logger.info(
-        LOG_SOURCE,
-        "[BT] D 매수 스킵 거래량부족 volRatio=%s 필요=%s",
-        volRatio.toFixed(2),
-        String(STRATEGY_D_VOLUME_RATIO),
+      logVolumeSkipTransition(
+        market,
+        "D",
+        true,
+        volRatio,
+        STRATEGY_D_VOLUME_RATIO,
       );
       return null;
     }
+    logVolumeSkipTransition(
+      market,
+      "D",
+      false,
+      volRatio,
+      STRATEGY_D_VOLUME_RATIO,
+    );
 
     // 저가 코인 필터
     if (currentPrice < STRATEGY_D_MIN_PRICE) return null;
