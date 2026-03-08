@@ -32,6 +32,12 @@ import {
   STRATEGY_C_TRAILING_ACTIVATE_PCT,
   STRATEGY_D_LOSS_COOLDOWN_MS,
   STRATEGY_F_COOLDOWN_MS,
+  STRATEGY_A_ENABLED,
+  STRATEGY_B_ENABLED,
+  STRATEGY_C_ENABLED,
+  STRATEGY_D_ENABLED,
+  STRATEGY_E_ENABLED,
+  STRATEGY_F_ENABLED,
 } from "./config";
 import { logger } from "./logger";
 import { writeTradeLog, tradeLogPath } from "./tradeLogger";
@@ -77,6 +83,8 @@ const strategyFCooldownLastLog: Record<string, number> = {};
 let regimeBlockCrashingActive = false;
 /** 레짐 차단 로그: 패닉 볼륨 구간에 진입했는지 (시작/종료만 로그용) */
 let regimeBlockPanicVolumeActive = false;
+/** 레짐 차단 로그: BTC MA 하락 추세 구간에 진입했는지 (시작/종료만 로그용) */
+let regimeBlockBearTrendActive = false;
 
 /** [대기] 로그: 직전에 출력한 상태(상황이 바뀔 때만 재출력) */
 let lastWaitLogSnapshot: string | null = null;
@@ -120,12 +128,20 @@ const printStartupBanner = (): void => {
     second: "2-digit",
     hour12: false,
   });
+  // stdout (out.log)
   console.log(line);
   console.log(`  🚀 CRYPTO AUTO TRADE BOT 기동`);
   console.log(`  시각: ${now} (KST)`);
   console.log(`  PID : ${process.pid}`);
   console.log(`  로그: ${tradeLogPath}`);
   console.log(line);
+  // stderr (error.log) — 재기동 시 에러 로그에도 구분점이 보이도록
+  console.error("");
+  console.error("▼".repeat(60));
+  console.error(`  ♻️  BOT 재기동 / 기동`);
+  console.error(`  시각: ${now} (KST)`);
+  console.error(`  PID : ${process.pid}`);
+  console.error("▼".repeat(60));
 };
 
 const run = async (): Promise<void> => {
@@ -537,17 +553,37 @@ const run = async (): Promise<void> => {
         regimeBlockPanicVolumeActive = false;
         logger.warn(LOG_SOURCE, "[레짐 차단] BTC 패닉 볼륨 해제 (종료)");
       }
+      if (regime.bearTrend) {
+        if (!regimeBlockBearTrendActive) {
+          regimeBlockBearTrendActive = true;
+          logger.warn(
+            LOG_SOURCE,
+            "[레짐 차단] BTC MA 하락 추세, 전략 무관 매수 중단 (시작)",
+          );
+        }
+        return;
+      }
+      if (regimeBlockBearTrendActive) {
+        regimeBlockBearTrendActive = false;
+        logger.warn(LOG_SOURCE, "[레짐 차단] BTC MA 하락 추세 해제 (종료)");
+      }
 
-      const buyB = checkBuySignalB(market, price);
-      const buyA = buyB?.shouldBuy ? null : checkBuySignalA(market, price);
+      const buyB = STRATEGY_B_ENABLED ? checkBuySignalB(market, price) : null;
+      const buyA =
+        buyB?.shouldBuy || !STRATEGY_A_ENABLED
+          ? null
+          : checkBuySignalA(market, price);
       const buyC =
-        buyB?.shouldBuy || buyA?.shouldBuy
+        buyB?.shouldBuy || buyA?.shouldBuy || !STRATEGY_C_ENABLED
           ? null
           : checkBuySignalC(market, price);
 
       // 전략 D 쿨다운 체크
       let buyD = null;
-      if (!(buyB?.shouldBuy || buyA?.shouldBuy || buyC?.shouldBuy)) {
+      if (
+        STRATEGY_D_ENABLED &&
+        !(buyB?.shouldBuy || buyA?.shouldBuy || buyC?.shouldBuy)
+      ) {
         const cooldownTime = lossCooldown[market];
         if (
           cooldownTime &&
@@ -577,12 +613,17 @@ const run = async (): Promise<void> => {
         }
       }
       const buyE =
-        buyB?.shouldBuy || buyA?.shouldBuy || buyC?.shouldBuy || buyD?.shouldBuy
+        buyB?.shouldBuy ||
+        buyA?.shouldBuy ||
+        buyC?.shouldBuy ||
+        buyD?.shouldBuy ||
+        !STRATEGY_E_ENABLED
           ? null
           : checkBuySignalE(market, price);
       // 전략 F 쿨다운 체크 후 F 매수 신호 검사
       let buyF: ReturnType<typeof checkBuySignalF> = null;
       if (
+        STRATEGY_F_ENABLED &&
         !buyB?.shouldBuy &&
         !buyA?.shouldBuy &&
         !buyC?.shouldBuy &&

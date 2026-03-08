@@ -27,6 +27,41 @@ import { logVolumeSkipTransition } from "./volumeSkipState";
 const LOG_SOURCE = "strategyD";
 const pricesFromCandles = (candles: { trade_price: number }[]): number[] =>
   candles.map((c) => c.trade_price);
+
+/**
+ * RSI 상한 초과 스킵 상태 (마켓별) — 전환 시점에만 로그.
+ * 매번 틱마다 "[BT] D 매수 스킵 RSI상한초과" 가 무수히 찍히는 것을 방지.
+ */
+const rsiMaxSkipStateByMarket = new Map<string, boolean>();
+
+function logRsiMaxSkipTransition(
+  market: string,
+  isSkipping: boolean,
+  rsiCur: number,
+): void {
+  const wasSkipping = rsiMaxSkipStateByMarket.get(market) ?? false;
+  if (isSkipping) {
+    if (!wasSkipping) {
+      logger.info(
+        LOG_SOURCE,
+        "[BT] D 매수 스킵 RSI상한초과 — 시작 rsiCur=%s max=%s",
+        rsiCur.toFixed(1),
+        String(STRATEGY_D_RSI_MAX),
+      );
+      rsiMaxSkipStateByMarket.set(market, true);
+    }
+    return;
+  }
+  if (wasSkipping) {
+    logger.info(
+      LOG_SOURCE,
+      "[BT] D 매수 스킵 RSI상한초과 해제 — 끝 rsiCur=%s max=%s",
+      rsiCur.toFixed(1),
+      String(STRATEGY_D_RSI_MAX),
+    );
+    rsiMaxSkipStateByMarket.set(market, false);
+  }
+}
 const volumesFromCandles = (
   candles: { candle_acc_trade_volume: number }[],
 ): number[] => candles.map((c) => c.candle_acc_trade_volume);
@@ -80,14 +115,11 @@ export const checkBuySignalD = (
     if (rsiCur - rsiPrev < STRATEGY_D_RSI_MIN_CROSS_STRENGTH) return null;
     // 과매수 구간 진입 차단: RSI가 상한(75) 초과 시 매수하지 않음. 과열 끝물 진입을 줄여 진입 직후 조정으로 인한 손절/휩쏘를 감소시키기 위함.
     if (rsiCur > STRATEGY_D_RSI_MAX) {
-      logger.info(
-        LOG_SOURCE,
-        "[BT] D 매수 스킵 RSI상한초과 rsiCur=%s max=%s",
-        rsiCur.toFixed(1),
-        String(STRATEGY_D_RSI_MAX),
-      );
+      logRsiMaxSkipTransition(market, true, rsiCur);
       return null;
     }
+    // RSI 상한 초과 상태 해제 — 전환 로그
+    logRsiMaxSkipTransition(market, false, rsiCur);
 
     const lastClosedVol = closedVolumes[closedVolumes.length - 1] ?? 0;
     const prevVols = closedVolumes.slice(0, -1);

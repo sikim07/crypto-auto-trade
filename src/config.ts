@@ -83,6 +83,17 @@ export const TRAILING_STOP_OFFSET_PCT = 0.5;
 /** 일일 최대 누적 손실(%) — 초과 시 당일 매매 중단 */
 export const DAILY_MAX_LOSS_PCT = -5;
 
+/**
+ * 전략 활성화 플래그 — false 로 바꾸면 해당 전략 매수 신호 전면 차단
+ * 성과 부진 전략을 빠르게 비활성화하여 손실 방어
+ */
+export const STRATEGY_A_ENABLED = true;
+export const STRATEGY_B_ENABLED = true;
+export const STRATEGY_C_ENABLED = true;
+export const STRATEGY_D_ENABLED = true;
+export const STRATEGY_E_ENABLED = true;
+export const STRATEGY_F_ENABLED = true;
+
 /** 전략 A: 저점 정밀 타격 — RSI 과매도 기준, 거래량 평균 봉 수 */
 /** 역추세 전략 A: 하락장 진입 차단 — 5분봉 MA5 < MA20 이면 매수 스킵 (횡보/상승에서만 동작) */
 export const STRATEGY_A_AVOID_DOWNTEND = true;
@@ -248,3 +259,14 @@ export const REGIME_PANIC_VOLUME_RATIO = 3.0;
 export const REGIME_PANIC_VOLUME_LOOKBACK = 19;
 /** 레짐 캐시 유효 시간(ms) */
 export const REGIME_CACHE_MS = 60 * 1000;
+
+/**
+ * 레짐: BTC 5분봉 MA 추세 필터
+ * - true: BTC MA 단기 < MA 장기일 때(하락 추세) 전략 무관 매수 전면 차단
+ * - 급락(-2%) 보다 완화된 기준으로 조기에 하락 추세 진입 차단
+ */
+export const REGIME_TREND_FILTER_ENABLED = true;
+/** BTC 5분봉 단기 MA 기간 (5봉 = 25분) */
+export const REGIME_BTC_MA_FAST = 5;
+/** BTC 5분봉 장기 MA 기간 (20봉 = 100분) */
+export const REGIME_BTC_MA_SLOW = 20;
