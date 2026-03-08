@@ -83,7 +83,21 @@ const strategyFCooldownLastLog: Record<string, number> = {};
 let regimeBlockCrashingActive = false;
 /** 레짐 차단 로그: 패닉 볼륨 구간에 진입했는지 (시작/종료만 로그용) */
 let regimeBlockPanicVolumeActive = false;
-/** 레짐 차단 로그: BTC MA 하락 추세 구간에 진입했는지 (시작/종료만 로그용) */
+/**
+ * 레짐 차단 로그: BTC MA 하락 추세 구간 진입 여부 (시작/종료만 로그용)
+ *
+ * [수정 이유] BTC 5분봉 MA5 < MA20(하락 추세)일 때 매수 차단 로직 추가.
+ *   기존 급락 감지(-2%)보다 완화된 기준으로, 완만한 하락 추세도 조기 차단.
+ *   하락 추세 종목에 전략 무관 반복 매수 → 손절 남발 문제를 방어하기 위함.
+ *
+ * [역할] 상태 플래그로 중복 로그 방지
+ *   false → true (하락 추세 진입 시): "[레짐 차단] BTC MA 하락 추세... (시작)" 1회
+ *   true → false (하락 추세 해제 시): "[레짐 차단] BTC MA 하락 추세 해제 (종료)" 1회
+ *
+ * [앞으로 확인할 것]
+ *   - 차단 빈도가 너무 높으면 config의 REGIME_BTC_MA_SLOW를 30~50으로 조정
+ *   - 차단 구간과 실제 BTC 가격 흐름을 대조해 필터 적절성 검증
+ */
 let regimeBlockBearTrendActive = false;
 
 /** [대기] 로그: 직전에 출력한 상태(상황이 바뀔 때만 재출력) */
@@ -553,6 +567,15 @@ const run = async (): Promise<void> => {
         regimeBlockPanicVolumeActive = false;
         logger.warn(LOG_SOURCE, "[레짐 차단] BTC 패닉 볼륨 해제 (종료)");
       }
+      // ── BTC MA 하락 추세 차단 ──────────────────────────────────────
+      // [수정 이유] BTC 5분봉 MA5 < MA20이면 전체 매수 중단.
+      //   기존 급락(-2%) 필터만으로는 완만한 하락 추세를 걸러내지 못해
+      //   하락 중인 종목에 전략 A~F 모두 반복 진입 → 손절 반복.
+      // [우선순위] crashing → panicVolume → bearTrend 순으로 체크.
+      //   bearTrend는 가장 완화된 기준이므로 하드 차단(급락/패닉) 이후에 배치.
+      // [앞으로 확인할 것]
+      //   로그에서 "(시작)/(종료)" 빈도를 보고 차단이 과도하면
+      //   config.ts의 REGIME_BTC_MA_SLOW 값을 30~50으로 상향 조정.
       if (regime.bearTrend) {
         if (!regimeBlockBearTrendActive) {
           regimeBlockBearTrendActive = true;
@@ -568,6 +591,16 @@ const run = async (): Promise<void> => {
         logger.warn(LOG_SOURCE, "[레짐 차단] BTC MA 하락 추세 해제 (종료)");
       }
 
+      // ── 전략별 매수 신호 검사 ──────────────────────────────────────
+      // [수정 이유] 6개 전략이 동시 운용되며 같은 종목에 중복 진입하는 문제.
+      //   (KAVA에 전략 D·F 동일 종목 동일 날 4회 진입 등)
+      //   각 전략에 ENABLED 플래그를 추가해 코드 수정 없이 즉시 비활성화 가능.
+      // [우선순위] B → A → C → D → E → F 순으로 하나만 진입.
+      //   앞 전략이 신호를 내면 뒤 전략은 체크 생략 (단기 스캘핑에서 중복 포지션 방지).
+      // [앞으로 확인할 것]
+      //   - 성과가 좋은 전략만 남기고 나머지는 false로 전환
+      //   - false로 바꿔도 이미 진입한 포지션의 매도 로직에는 영향 없음
+      //   - 전략 우선순위(B가 1순위)가 현재 매매 패턴에 적합한지 주기적 재검토
       const buyB = STRATEGY_B_ENABLED ? checkBuySignalB(market, price) : null;
       const buyA =
         buyB?.shouldBuy || !STRATEGY_A_ENABLED

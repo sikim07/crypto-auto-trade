@@ -18,7 +18,11 @@ const LOG_SOURCE = "marketRegime";
 /** 마지막으로 급락이 감지된 시각 (쿨다운 계산용) */
 let lastCrashDetectedAt = 0;
 
-/** BTC MA 추세 필터: 직전 bearTrend 상태 (전환 시에만 로그) */
+/**
+ * BTC MA 추세 필터: 직전 bearTrend 상태 저장
+ * - 전환 시(false→true, true→false)에만 로그 1회 출력해 로그 노이즈 방지
+ * - 프로세스 재기동 시 false로 초기화되므로 기동 직후 추세 상태 로그가 1회 찍힘
+ */
 let prevBearTrend = false;
 
 /** 캐시된 레짐 상태 */
@@ -44,9 +48,28 @@ const isBtcCrashing = (): boolean => {
 };
 
 /**
+ * ──────────────────────────────────────────────────────────────
  * 레이어 1.5: BTC 5분봉 MA 추세 감지 (소프트 차단)
- * - MA 단기(5봉) < MA 장기(20봉) 이면 하락 추세로 판단
- * - 급락(-2%) 보다 완화된 기준으로 조기 하락 추세 포착
+ *
+ * [수정 이유]
+ *   기존 isBtcCrashing()은 30분 내 -2% 급락만 차단.
+ *   완만한 하락 추세(시간당 -0.5~-1.5%)에서는 차단이 전혀 없어
+ *   하락 종목에 계속 매수 신호가 발생하고 반복 손절 발생.
+ *
+ * [판단 기준]
+ *   BTC 5분봉 MA5(25분) < MA20(100분) → 하락 추세로 판단
+ *   - MA5가 MA20 아래 = 단기 평균이 중기 평균보다 낮음 = 가격 하락 중
+ *   - 크로스 기반이라 단순 가격 비교보다 노이즈에 강함
+ *
+ * [REGIME_TREND_FILTER_ENABLED=false 시]
+ *   이 함수는 항상 false 반환 → bearTrend 차단 비활성화
+ *   (테스트 목적으로 필터를 끄고 싶을 때 config에서 변경)
+ *
+ * [앞으로 확인할 것]
+ *   - REGIME_CACHE_MS(60초)마다 갱신 → 최대 60초 지연 있음
+ *   - BTC 5분봉 캔들이 REGIME_BTC_MA_SLOW(20개) 미만이면 false 반환
+ *     (봇 초기 기동 직후 약 100분간 판단 보류)
+ * ──────────────────────────────────────────────────────────────
  */
 const isBtcBearTrend = (): boolean => {
   if (!REGIME_TREND_FILTER_ENABLED) return false;
@@ -107,6 +130,8 @@ export const getMarketRegime = (): MarketRegime => {
   }
 
   // BTC MA 추세 필터: 전환 시에만 로그
+  // prevBearTrend와 비교해 상태가 바뀔 때(하락→상승, 상승→하락)만 warn 로그 1회 출력
+  // → 매 틱마다 같은 로그가 반복되는 노이즈 방지
   const bearTrendNow = isBtcBearTrend();
   if (bearTrendNow && !prevBearTrend) {
     logger.warn(
