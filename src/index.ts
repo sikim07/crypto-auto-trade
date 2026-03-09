@@ -32,6 +32,7 @@ import {
   STRATEGY_C_TRAILING_ACTIVATE_PCT,
   STRATEGY_D_LOSS_COOLDOWN_MS,
   STRATEGY_F_COOLDOWN_MS,
+  STRATEGY_F_LOSS_COOLDOWN_MS,
   STRATEGY_A_ENABLED,
   STRATEGY_B_ENABLED,
   STRATEGY_C_ENABLED,
@@ -78,6 +79,11 @@ const lossCooldownLastLog: Record<string, number> = {};
 const strategyFCooldown: Record<string, number> = {};
 /** 전략 F 쿨다운 차단 로그 쓰로틀 (종목별 마지막 로그 시각) */
 const strategyFCooldownLastLog: Record<string, number> = {};
+/**
+ * 전략 F 손실 종목 쿨다운 [2차 수정] — 손실 매도 후 15분 재진입 차단
+ * 수익 매도는 기존 strategyFCooldown(5분)만 적용, 손실 매도는 두 쿨다운 모두 적용.
+ */
+const strategyFLossCooldown: Record<string, number> = {};
 
 /** 레짐 차단 로그: 급락/쿨다운 구간에 진입했는지 (시작/종료만 로그용) */
 let regimeBlockCrashingActive = false;
@@ -427,7 +433,10 @@ const run = async (): Promise<void> => {
                   finalNetPct.toFixed(2),
                 );
               }
-              // 전략 F 매도 종목 쿨다운 등록 (손실/익절 무관)
+              // 전략 F 쿨다운 등록 [2차 수정]
+              // - 기존: 손익 무관 단일 5분 쿨다운
+              // - 변경: 수익→5분(재진입 허용), 손실→15분(재진입 차단) 이중 구조로 분리
+              //   이유: 손실 후 5분만 지나면 동일 종목 재진입해 손실 반복되는 패턴 방지
               if (strategyTag === "F") {
                 strategyFCooldown[position.market] = Date.now();
                 logger.info(
@@ -435,6 +444,15 @@ const run = async (): Promise<void> => {
                   "[쿨다운] 전략F 종목 등록: %s",
                   position.market,
                 );
+                if (finalNetPct < 0) {
+                  strategyFLossCooldown[position.market] = Date.now();
+                  logger.info(
+                    LOG_SOURCE,
+                    "[쿨다운] 전략F 손실 종목 등록: %s (순수익 %s%%)",
+                    position.market,
+                    finalNetPct.toFixed(2),
+                  );
+                }
               }
               const tradeProfitStr =
                 tradeProfitKrw >= 0
@@ -663,17 +681,42 @@ const run = async (): Promise<void> => {
         !buyD?.shouldBuy &&
         !buyE?.shouldBuy
       ) {
-        const fCooldownTime = strategyFCooldown[market];
-        if (
-          fCooldownTime &&
-          Date.now() - fCooldownTime < STRATEGY_F_COOLDOWN_MS
-        ) {
+        // [2차 수정] 이중 쿨다운 체크
+        // - winCooldown: 수익/손실 무관 5분 (빠른 재진입 허용)
+        // - lossCooldown: 손실 후 15분 (반복 손실 방지)
+        // 손실 매도 시 두 쿨다운이 모두 등록되므로 15분이 사실상 우선 적용됨
+        const fWinCooldownTime = strategyFCooldown[market];
+        const fLossCooldownTime = strategyFLossCooldown[market];
+        const winBlocked =
+          !!fWinCooldownTime &&
+          Date.now() - fWinCooldownTime < STRATEGY_F_COOLDOWN_MS;
+        const lossBlocked =
+          !!fLossCooldownTime &&
+          Date.now() - fLossCooldownTime < STRATEGY_F_LOSS_COOLDOWN_MS;
+
+        if (winBlocked || lossBlocked) {
           const now = Date.now();
           const lastLog = strategyFCooldownLastLog[market] ?? 0;
           if (now - lastLog >= 5 * 60_000) {
-            const remainingMin = Math.ceil(
-              (STRATEGY_F_COOLDOWN_MS - (now - fCooldownTime)) / 60_000,
-            );
+            const winRemaining = fWinCooldownTime
+              ? Math.max(
+                  0,
+                  Math.ceil(
+                    (STRATEGY_F_COOLDOWN_MS - (now - fWinCooldownTime)) /
+                      60_000,
+                  ),
+                )
+              : 0;
+            const lossRemaining = fLossCooldownTime
+              ? Math.max(
+                  0,
+                  Math.ceil(
+                    (STRATEGY_F_LOSS_COOLDOWN_MS - (now - fLossCooldownTime)) /
+                      60_000,
+                  ),
+                )
+              : 0;
+            const remainingMin = Math.max(winRemaining, lossRemaining);
             logger.debug(
               LOG_SOURCE,
               "[쿨다운] 전략F 진입 차단: %s (남은 시간 %s분)",
@@ -683,9 +726,13 @@ const run = async (): Promise<void> => {
             strategyFCooldownLastLog[market] = now;
           }
         } else {
-          if (fCooldownTime) {
+          // 만료된 쿨다운 맵에서 정리
+          if (fWinCooldownTime) {
             delete strategyFCooldown[market];
             delete strategyFCooldownLastLog[market];
+          }
+          if (fLossCooldownTime) {
+            delete strategyFLossCooldown[market];
           }
           buyF = checkBuySignalF(market, price);
         }
