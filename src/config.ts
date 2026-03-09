@@ -255,7 +255,8 @@ export const STRATEGY_F_LOSS_COOLDOWN_MS = 15 * 60 * 1000;
  *   이 값을 늘리면 더 오래된 터치도 인정해 신호 빈도 증가,
  *   줄이면 최근 터치만 인정해 신호 빈도 감소.
  */
-export const STRATEGY_F_EMA_TOUCH_WINDOW = 3;
+/** EMA21 터치 확인 창 (봉 수) — 직전 마감봉 수. 3→5: 터치 인정 범위 확장, 신호 과소 개선 */
+export const STRATEGY_F_EMA_TOUCH_WINDOW = 5;
 
 /**
  * EMA21 터치 허용 버퍼 (%) — 저가가 EMA21 × (1 + 이 값/100) 이하이면 터치로 판정
@@ -394,7 +395,8 @@ export const REGIME_TREND_FILTER_ENABLED = true;
  */
 export const REGIME_BTC_MA_FAST = 5;
 /**
- * BTC 5분봉 장기 MA 기간 (20봉 = 100분)
- * → 조정: 차단이 너무 잦으면 30~50으로 늘려 필터 완화
+ * BTC 5분봉 장기 MA 기간 (30봉 = 150분)
+ * → 20봉(100분)에서 상향: 오늘 로그 기준 하루 3시간+ 과차단 확인,
+ *   30봉으로 완화해 완만한 단기 하락 추세는 허용.
  */
-export const REGIME_BTC_MA_SLOW = 20;
+export const REGIME_BTC_MA_SLOW = 30;

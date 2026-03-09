@@ -767,14 +767,25 @@ const run = async (): Promise<void> => {
             SECRET_KEY,
             market,
           );
-          const buyPriceForPosition = avgBuyPrice > 0 ? avgBuyPrice : price;
+          // avgBuyPrice 신뢰성 검증: 신호가 대비 10% 초과 괴리는 이전 세션 잔량 혼입으로
+          // 판단해 신호가를 사용. (예: 이전 세션에서 838원에 산 FLOW가 계좌에 잔존하면
+          // avg_buy_price가 838로 반환되어 손절 오트리거 및 P&L 오염 발생)
+          const AVG_PRICE_SANITY_PCT = 10;
+          const isSane =
+            avgBuyPrice > 0 &&
+            Math.abs(avgBuyPrice - price) / price <= AVG_PRICE_SANITY_PCT / 100;
+          const buyPriceForPosition = isSane ? avgBuyPrice : price;
           logger.info(
             LOG_SOURCE,
             "[매수] [전략%s] 체결: %s | %s 원 %s",
             strategy ?? "legacy",
             market,
             buyPriceForPosition.toFixed(0),
-            avgBuyPrice > 0 ? "(체결평균가)" : "(신호가)",
+            isSane && avgBuyPrice > 0
+              ? "(체결평균가)"
+              : avgBuyPrice > 0
+                ? `(신호가 — avgBuyPrice ${avgBuyPrice.toFixed(0)}원 괴리 과다)`
+                : "(신호가)",
           );
           const dailyStrBuy =
             dailyProfitKrw >= 0
