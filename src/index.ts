@@ -597,7 +597,7 @@ const run = async (): Promise<void> => {
       if (regime.bearTrend) {
         if (!regimeBlockBearTrendActive) {
           regimeBlockBearTrendActive = true;
-          logger.warn(
+          logger.debug(
             LOG_SOURCE,
             "[레짐 차단] BTC MA 하락 추세, 전략 무관 매수 중단 (시작)",
           );
@@ -606,7 +606,7 @@ const run = async (): Promise<void> => {
       }
       if (regimeBlockBearTrendActive) {
         regimeBlockBearTrendActive = false;
-        logger.warn(LOG_SOURCE, "[레짐 차단] BTC MA 하락 추세 해제 (종료)");
+        logger.debug(LOG_SOURCE, "[레짐 차단] BTC MA 하락 추세 해제 (종료)");
       }
 
       // ── 전략별 매수 신호 검사 ──────────────────────────────────────

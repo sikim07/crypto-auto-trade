@@ -81,12 +81,13 @@ const connect = (
   });
 
   socket.on("close", (code, reason) => {
-    logger.warn(
-      LOG_SOURCE,
-      "WebSocket 연결 종료 (code: %s, reason: %s)",
-      String(code),
-      reason?.toString() ?? "없음",
-    );
+    const msg = "WebSocket 연결 종료 (code: %s, reason: %s)";
+    const args = [String(code), reason?.toString() ?? "없음"];
+    if (code === 1000) {
+      logger.debug(LOG_SOURCE, msg, ...args);
+    } else {
+      logger.warn(LOG_SOURCE, msg, ...args);
+    }
     ws = null;
     if (watchdogTimer) {
       clearTimeout(watchdogTimer);

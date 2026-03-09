@@ -134,14 +134,14 @@ export const getMarketRegime = (): MarketRegime => {
   // → 매 틱마다 같은 로그가 반복되는 노이즈 방지
   const bearTrendNow = isBtcBearTrend();
   if (bearTrendNow && !prevBearTrend) {
-    logger.warn(
+    logger.debug(
       LOG_SOURCE,
       "[MA추세] BTC 5분봉 MA%s < MA%s — 하락 추세 감지, 매수 차단 (시작)",
       String(REGIME_BTC_MA_FAST),
       String(REGIME_BTC_MA_SLOW),
     );
   } else if (!bearTrendNow && prevBearTrend) {
-    logger.warn(
+    logger.debug(
       LOG_SOURCE,
       "[MA추세] BTC 5분봉 MA%s > MA%s — 하락 추세 해제, 매수 재개 (종료)",
       String(REGIME_BTC_MA_FAST),
