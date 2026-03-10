@@ -9,6 +9,7 @@ import {
   REGIME_TREND_FILTER_ENABLED,
   REGIME_BTC_MA_FAST,
   REGIME_BTC_MA_SLOW,
+  REGIME_BTC_MA_HYSTERESIS_BAND,
 } from "../config";
 import { calculateSMA } from "../indicators";
 import { logger } from "../logger";
@@ -71,6 +72,24 @@ const isBtcCrashing = (): boolean => {
  *     (봇 초기 기동 직후 약 100분간 판단 보류)
  * ──────────────────────────────────────────────────────────────
  */
+/**
+ * [3차 개선] 히스테리시스(데드밴드) 적용
+ *
+ * [수정 이유]
+ *   기존: maFast < maSlow → 차단, maFast >= maSlow → 즉시 해제 (동일 기준선).
+ *   MA5 ≈ MA30 구간에서 매 캔들마다 교차가 반복되어 1분 간격 토글 발생.
+ *   (2026-03-10 13:37~13:41: 1분마다 4회 전환)
+ *
+ * [변경 내용]
+ *   - 차단 조건: maFast < maSlow × (1 - HYSTERESIS_BAND) → 0.1% 이상 명확히 하락할 때만
+ *   - 해제 조건: maFast > maSlow × (1 + HYSTERESIS_BAND) → 0.1% 이상 명확히 상승할 때만
+ *   - 그 사이 ±0.1% 구간: prevBearTrend(이전 상태) 유지
+ *
+ * [앞으로 확인할 것]
+ *   - "[MA추세] BTC ... 차단/해제" 로그 전환 빈도 감소 여부.
+ *   - 토글이 여전히 잦으면 REGIME_BTC_MA_HYSTERESIS_BAND 0.002(0.2%)로 상향.
+ *   - 반대로 추세 전환 포착이 너무 느리면 0.0005(0.05%)로 하향.
+ */
 const isBtcBearTrend = (): boolean => {
   if (!REGIME_TREND_FILTER_ENABLED) return false;
   const candles5m = getCandles("KRW-BTC", 5);
@@ -79,7 +98,10 @@ const isBtcBearTrend = (): boolean => {
   const prices = candles5m.map((c) => c.trade_price);
   const maFast = calculateSMA(prices.slice(-REGIME_BTC_MA_FAST), REGIME_BTC_MA_FAST);
   const maSlow = calculateSMA(prices.slice(-REGIME_BTC_MA_SLOW), REGIME_BTC_MA_SLOW);
-  return maFast < maSlow;
+
+  if (maFast < maSlow * (1 - REGIME_BTC_MA_HYSTERESIS_BAND)) return true;  // 명확한 하락
+  if (maFast > maSlow * (1 + REGIME_BTC_MA_HYSTERESIS_BAND)) return false; // 명확한 상승
+  return prevBearTrend; // ±0.1% 구간: 이전 상태 유지
 };
 
 /** 레이어 2: BTC 패닉 거래량 감지 (하드 차단) */

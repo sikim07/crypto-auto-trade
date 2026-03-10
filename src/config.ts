@@ -118,13 +118,57 @@ export const STRATEGY_A_VOLUME_AVG_PERIOD = 5;
 /** 전략 A 손절: 진입가 - (ATR × 이 배수) 도달 시 손절 */
 export const STRATEGY_A_ATR_STOP_MULTIPLIER = 1.5;
 /** 전략 A 손절: 매수가 기준 최소 손절 거리 (%) — 이 값보다 가까운 손절가는 강제로 내림 */
-export const STRATEGY_A_MIN_STOP_DISTANCE_PCT = 1.0;
-/** 전략 A 최대 보유 시간 (분) — 초과 시 BB 중앙 미도달이어도 현재가 청산 */
-export const STRATEGY_A_MAX_HOLD_MINUTES = 7;
+/**
+ * [3차 개선] 1.0 → 1.3
+ * 이유: SLIPPAGE_PCT 현실화(0.15→추후 0.30) 대응 및 1분봉 단기 변동성 흡수 공간 확보.
+ *      이전 1.0% 기준에서 "최소거리보장" 손절이 진입 20초 만에 발동하는 사례 확인
+ *      (2026-03-10 11:21: 87원 매수 → 86원 즉시 손절).
+ *      1.3%로 넓혀 정상 변동성 내 노이즈 손절 감소 목적.
+ * 확인할 것:
+ *   - 손절 사유가 "최소거리보장"인 케이스 감소 여부 로그 모니터링.
+ *   - 반대로 손실이 1.3% 이상으로 커지는 케이스가 증가하면 1.1~1.2%로 재조정.
+ */
+export const STRATEGY_A_MIN_STOP_DISTANCE_PCT = 1.3;
+/**
+ * [3차 개선] 7 → 10
+ * 이유: 역추세 반등 사이클이 완성되려면 7분으로는 부족한 케이스 반복 확인.
+ *      (2026-03-10 14:04: 최대 +0.41% 도달 후 7분 시간초과 -0.14% 손실 마감).
+ *      10분으로 연장해 BB 중앙 도달 가능성 확보. 단, 과도한 연장은 손실 누적 위험.
+ * 확인할 것:
+ *   - 7~10분 사이에 BB 중앙 도달하여 익절하는 케이스 증가 여부.
+ *   - 오히려 10분간 하락이 지속되는 케이스가 많으면 8~9분으로 조정.
+ */
+export const STRATEGY_A_MAX_HOLD_MINUTES = 10;
 /** 전략 A 진입: BB 하단 기준 허용 버퍼 비율 — 1.01 = BB 하단 대비 1% 이내까지 허용 */
 export const STRATEGY_A_BB_ENTRY_BUFFER = 1.01;
 /** 전략 A 인트라캔들 RSI 조기 진입 임계값 — 마감봉 30보다 높게 설정해 노이즈 방지 */
 export const STRATEGY_A_RSI_INTRACANDLE_THRESHOLD = 31;
+/**
+ * ──────────────────────────────────────────────────────────────
+ * [3차 개선 신규] 전략 A 트레일링 스톱
+ *
+ * [수정 이유]
+ *   기존 A 전략 익절 조건이 "BB 중앙 도달" 단일 조건이어서,
+ *   BB 중앙 미도달 시 최대보유 시간초과로만 청산 → 수익 기회 낭비.
+ *   (2026-03-10 14:04: 최대 +0.41%를 찍고 7분 시간초과 -0.14% 마감)
+ *
+ * [목적]
+ *   +0.8% 도달 시 트레일링 스톱 활성화 → 고점 대비 0.5% 하락 시 익절.
+ *   BB 중앙까지 못 가더라도 일정 수익 구간에서 수익을 보존.
+ *   BB 중앙 도달 익절은 그대로 유지 (트레일링 미발동 시 기존 흐름 유지).
+ *
+ * [앞으로 확인할 것]
+ *   - [BT] A 매도 type=트레일링 로그 빈도 모니터링.
+ *   - 트레일링 청산 후 실제로 추가 상승이 있었는지 사후 확인
+ *     (있으면 TRAILING_ACTIVATE_PCT 상향 또는 TRAILING_OFFSET_PCT 완화 검토).
+ *   - 트레일링이 너무 자주 발동해 BB 중앙 익절보다 낮은 수익으로 마감되면
+ *     TRAILING_ACTIVATE_PCT 1.0~1.2%로 상향 검토.
+ * ──────────────────────────────────────────────────────────────
+ */
+/** 전략 A 트레일링 스톱 활성화 임계값(%) — 순수익이 이 값 이상 도달 시 트레일링 시작 */
+export const STRATEGY_A_TRAILING_ACTIVATE_PCT = 0.8;
+/** 전략 A 트레일링 스톱 허용 낙폭(%p) — 고점 순수익 대비 이 값 이상 하락 시 청산 */
+export const STRATEGY_A_TRAILING_OFFSET_PCT = 0.5;
 
 /** 전략 B: 멀티타임프레임 MACD+RSI 모멘텀 — 손절, 최대 보유 */
 export const STRATEGY_B_STOP_LOSS_PCT = -1.5;
@@ -136,8 +180,29 @@ export const STRATEGY_C_BB_SQUEEZE_RATIO = 0.02;
 export const STRATEGY_C_VOLUME_RATIO = 2.5;
 export const STRATEGY_C_VOLUME_AVG_PERIOD = 10;
 export const STRATEGY_C_BODY_RATIO_MIN = 0.6;
-export const STRATEGY_C_TRAILING_ACTIVATE_PCT = 2;
-export const STRATEGY_C_TRAILING_OFFSET_PCT = 1.5;
+/**
+ * [3차 개선] TRAILING_ACTIVATE_PCT: 2 → 0.8, TRAILING_OFFSET_PCT: 1.5 → 0.5
+ *
+ * [수정 이유]
+ *   기존 활성화 기준 2%는 실제 최대 수익(0.8~1.2% 구간)보다 높아 트레일링이 한 번도
+ *   발동하지 않는 문제 확인. BB 중앙 하향 조건이 먼저 발동해 수익을 환원.
+ *   (2026-03-10 05:25: 최대 +0.81% → BB중앙 하향 -0.12% 손절)
+ *   (2026-03-10 06:13: 최대 +1.19% → BB중앙 하향 +0.01% 청산)
+ *   또한 checkSellSignalC 내 트레일링 체크 순서를 BB중앙 체크보다 앞으로 이동.
+ *   수익 중에는 BB중앙 하향보다 트레일링이 우선 발동하도록 구조 변경.
+ *
+ * [목적]
+ *   +0.8% 도달 시 즉시 트레일링 활성화 → 고점 대비 0.5% 하락 시 익절 청산.
+ *   (예: 최대 1.19% → 트레일링 발동 시 약 +0.69%로 마감 ← 기존 +0.01% 대비 대폭 개선)
+ *
+ * [앞으로 확인할 것]
+ *   - [BT] C 매도 type=트레일링 vs BB중앙하향 비율 모니터링.
+ *     트레일링 비율이 높아지면 진입 품질 개선 확인됨.
+ *   - 트레일링 발동 후 추가 상승이 자주 있으면 TRAILING_OFFSET_PCT 0.6~0.8%로 완화 검토.
+ *   - 0.8% 미만 수익에서 BB중앙 하향으로 손절 나가는 케이스가 줄었는지 확인.
+ */
+export const STRATEGY_C_TRAILING_ACTIVATE_PCT = 0.8;
+export const STRATEGY_C_TRAILING_OFFSET_PCT = 0.5;
 export const STRATEGY_C_STOP_LOSS_PCT = -1.5;
 export const STRATEGY_C_MAX_HOLD_MINUTES = 20;
 
@@ -400,3 +465,23 @@ export const REGIME_BTC_MA_FAST = 5;
  *   30봉으로 완화해 완만한 단기 하락 추세는 허용.
  */
 export const REGIME_BTC_MA_SLOW = 30;
+/**
+ * [3차 개선 신규] BTC MA 추세 필터 히스테리시스 밴드
+ *
+ * [수정 이유]
+ *   기존: maFast < maSlow 이면 차단, maFast >= maSlow 이면 즉시 해제 — 동일 기준선.
+ *   MA5 ≈ MA30 구간에서 매 캔들마다 교차가 반복되어 1분 간격으로 차단↔해제 토글 확인.
+ *   (2026-03-10 13:37~13:41: 1분마다 4회 전환, 매수 기회 손실 + 불필요한 재연결 발생)
+ *
+ * [목적]
+ *   차단 조건: maFast < maSlow × (1 - 이 값) → 명확한 하락일 때만 차단
+ *   해제 조건: maFast > maSlow × (1 + 이 값) → 명확한 상승일 때만 해제
+ *   그 사이 구간: 이전 상태 유지 (토글 방지)
+ *   0.1%(0.001)로 설정 — 너무 크면 추세 전환 지연, 너무 작으면 효과 미미.
+ *
+ * [앞으로 확인할 것]
+ *   - 차단/해제 로그 전환 빈도 감소 여부 모니터링.
+ *   - MA 교차 직후 실제 추세 방향과 차단 상태가 일치하는지 사후 확인.
+ *   - 토글이 여전히 자주 발생하면 0.002(0.2%)로 상향 검토.
+ */
+export const REGIME_BTC_MA_HYSTERESIS_BAND = 0.001;

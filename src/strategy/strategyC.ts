@@ -132,7 +132,17 @@ const getNetProfitPct = (buyPrice: number, currentPrice: number): number => {
   return raw - COST_PCT;
 };
 
-/** 전략 C 매도: 고정 손절 → 최대 보유 → BB 중앙선(마감 봉 기준) → 2% 도달 후 트레일링 -1.5% */
+/**
+ * 전략 C 매도: 고정 손절 → 최대 보유 → 트레일링 스톱(신규 우선) → BB 중앙선(마감 봉 기준)
+ *
+ * [3차 개선] 트레일링 체크 순서를 BB중앙 이전으로 이동 (config 파라미터 변경 연동)
+ *   - TRAILING_ACTIVATE_PCT: 2% → 0.8% (실제 최대수익 구간인 0.8~1.2%에서 발동 가능)
+ *   - TRAILING_OFFSET_PCT: 1.5% → 0.5% (수익 보존력 강화)
+ *   - 순서 변경 이유: 기존에는 BB중앙 하향 체크가 먼저 실행되어, 트레일링이 활성화된
+ *     상태에서도 BB중앙 조건이 먼저 매도를 발동시켜 수익을 환원하는 문제 발생.
+ *     (2026-03-10: 최대 1.19% → BB중앙 하향으로 +0.01% 청산)
+ *     이제 트레일링 발동 중이면 BB중앙은 트레일링 미발동 시의 안전장치로만 작동.
+ */
 export const checkSellSignalC = (
   market: string,
   position: BotPosition,
@@ -181,6 +191,34 @@ export const checkSellSignalC = (
     };
   }
 
+  // [3차 개선] 트레일링 스톱을 BB중앙 체크보다 먼저 실행
+  // trailingActivated는 index.ts에서 maxNetPct >= STRATEGY_C_TRAILING_ACTIVATE_PCT(0.8%) 시 설정
+  if (position.trailingActivated && position.highestPrice != null) {
+    const threshold =
+      position.highestPrice * (1 - STRATEGY_C_TRAILING_OFFSET_PCT / 100);
+    if (currentPrice <= threshold) {
+      logger.info(
+        LOG_SOURCE,
+        "[시그널] %s | 익절 트레일링 | 고가 %s 대비 -%s%% 하락",
+        market,
+        position.highestPrice.toFixed(0),
+        STRATEGY_C_TRAILING_OFFSET_PCT,
+      );
+      logger.info(
+        LOG_SOURCE,
+        "[BT] C 매도 type=트레일링 high=%s offsetPct=%s netPct=%s",
+        position.highestPrice.toFixed(0),
+        String(STRATEGY_C_TRAILING_OFFSET_PCT),
+        netPct.toFixed(2),
+      );
+      return {
+        shouldSell: true,
+        reason: `전략C 익절 트레일링 (고가 ${position.highestPrice.toFixed(0)} 대비 -${STRATEGY_C_TRAILING_OFFSET_PCT}%)`,
+      };
+    }
+  }
+
+  // BB중앙 하향: 트레일링 미발동(수익 0.8% 미만) 구간에서의 안전장치
   const candles1m = getCandles(market, 1);
   const volumes1m = volumesFromCandles(candles1m);
   const isCurrentCandleOpen =
@@ -209,31 +247,6 @@ export const checkSellSignalC = (
       return {
         shouldSell: true,
         reason: `전략C 손절 (가격 ${currentPrice.toFixed(0)} < BB중앙 ${bb.middle.toFixed(0)})`,
-      };
-    }
-  }
-
-  if (position.trailingActivated && position.highestPrice != null) {
-    const threshold =
-      position.highestPrice * (1 - STRATEGY_C_TRAILING_OFFSET_PCT / 100);
-    if (currentPrice <= threshold) {
-      logger.info(
-        LOG_SOURCE,
-        "[시그널] %s | 익절 트레일링 | 고가 %s 대비 -%s%% 하락",
-        market,
-        position.highestPrice.toFixed(0),
-        STRATEGY_C_TRAILING_OFFSET_PCT,
-      );
-      logger.info(
-        LOG_SOURCE,
-        "[BT] C 매도 type=트레일링 high=%s offsetPct=%s netPct=%s",
-        position.highestPrice.toFixed(0),
-        String(STRATEGY_C_TRAILING_OFFSET_PCT),
-        netPct.toFixed(2),
-      );
-      return {
-        shouldSell: true,
-        reason: `전략C 익절 트레일링 (고가 ${position.highestPrice.toFixed(0)} 대비 -${STRATEGY_C_TRAILING_OFFSET_PCT}%)`,
       };
     }
   }
