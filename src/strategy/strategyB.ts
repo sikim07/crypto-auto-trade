@@ -7,6 +7,7 @@ import {
   COST_PCT,
   STRATEGY_B_STOP_LOSS_PCT,
   STRATEGY_B_MAX_HOLD_MINUTES,
+  RSI_TAKE_PROFIT_MIN_PCT,
 } from "../config";
 import type { BuySignalResult, SellSignalResult } from "./signal";
 import type { BotPosition } from "../types";
@@ -119,10 +120,16 @@ export const checkBuySignalB = (
       String(threshold),
       withDivergence ? "(다이버전스)" : "",
     );
+    // histPct = 5분봉 MACD_hist / 현재가 × 100 (%).
+    // 제안 1(MACD_hist 정규화 필터) 임계값 결정을 위한 수집 데이터.
+    // 매수 신호 발동 시에만 찍히므로 로그 빈도 증가 없음.
+    // 수집 후 손익 결과와 대조해 손실 케이스의 histPct 상한을 임계값으로 설정.
+    const histPct = (macd5m.histogram / currentPrice) * 100;
     logger.info(
       LOG_SOURCE,
-      "[BT] B 매수 MACD_hist=%s RSI=%s thr=%s div=%s price=%s",
+      "[BT] B 매수 MACD_hist=%s histPct=%s%% RSI=%s thr=%s div=%s price=%s",
       macd5m.histogram.toFixed(6),
+      histPct.toFixed(4),
       rsiCur.toFixed(1),
       String(threshold),
       withDivergence ? "1" : "0",
@@ -206,6 +213,33 @@ export const checkSellSignalB = (
     const macd = calculateMACD(prices);
     const deadCross =
       macd.prevMacd >= macd.prevSignal && macd.macd < macd.signal;
+    /*
+     * [4차 개선 검토 보류] 데드크로스 손절 조건 강화 — SELECT_MIN_PRICE=200 적용 후 재관찰 예정
+     *
+     * [배경]
+     *   로그 분석에서 ICX(58~59원) 데드크로스 손절 3연속 발생 (RSI 45.5, 45.8, 46.7).
+     *   이 케이스들은 SELECT_MIN_PRICE=200 필터로 ICX 자체가 종목 선정에서 제외되어
+     *   4차 개선 이후 재발 가능성이 낮아짐. 별도 조건 강화 없이 경과 관찰.
+     *
+     * [검토했던 대안 3가지]
+     *   A. RSI 임계값 낮춤 (< 50 → < 45)
+     *      - 구현 단순. RSI 45~49 구간 데드크로스 차단.
+     *      - 위험: 차단 후 RSI가 계속 하락하면 하드손절(-1.5%)까지 손실 확대.
+     *
+     *   B. 진입 후 N분 이내 데드크로스 무시 ("쿨인" 기간, 권장 3분)
+     *      - 매수 직후 노이즈성 데드크로스 차단. 하드손절은 그대로 작동해 하한 보호.
+     *      - const DEAD_CROSS_GRACE_MIN = 3; holdMin >= DEAD_CROSS_GRACE_MIN 조건 추가.
+     *      - 위험: 쿨인 기간 중 실제 추세 전환 시 손실이 더 깊어질 수 있음.
+     *
+     *   C. 연속 2봉 데드크로스 확인
+     *      - 1봉 허수 크로스 제거 효과 가장 큼.
+     *      - calculateMACD가 prevPrevMacd를 반환하지 않아 indicators 수정 필요.
+     *      - 1봉 지연으로 손실이 0.5~1% 더 깊어질 수 있음.
+     *
+     * [재검토 시점]
+     *   SELECT_MIN_PRICE=200 적용 후에도 200원 이상 종목에서 데드크로스 손절이
+     *   반복된다면 대안 B(쿨인 기간)를 우선 검토.
+     */
     if (deadCross && typeof rsiCur === "number" && rsiCur < RSI_50) {
       logger.info(
         LOG_SOURCE,
@@ -230,6 +264,14 @@ export const checkSellSignalB = (
   const prevRsi = position.lastRsi ?? 0;
   if (typeof rsiCur === "number") {
     if (prevRsi >= RSI_70 && rsiCur < RSI_70) {
+      // [4차 개선] RSI 70 하향 돌파 익절 시 최소 순수익 조건 추가 (RSI_TAKE_PROFIT_MIN_PCT = 0.5%).
+      // 기존: 순수익 무관하게 RSI 70 하향만으로 매도 → "익절" 로그에도 실제 순수익 음수 케이스 발생.
+      // (로그 분석: RSI 71.4→67.9 순수익 -0.25%, RSI 75.0→64.3 순수익 -0.61% 등 4건)
+      // 공통 signal.ts의 checkSellSignal에는 이미 적용되어 있었으나 checkSellSignalB에서 누락됨.
+      // 수정: 순수익 0.5% 미만 시 RSI 익절 미발동, 계속 홀딩하여 시간초과 또는 데드크로스 대기.
+      if (netPct < RSI_TAKE_PROFIT_MIN_PCT) {
+        return { shouldSell: false, lastRsi: rsiCur };
+      }
       logger.info(
         LOG_SOURCE,
         "[시그널] %s | 익절 (RSI 70 하향 돌파) %s → %s",

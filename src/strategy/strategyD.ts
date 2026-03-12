@@ -10,7 +10,6 @@ import {
   STRATEGY_D_DISPLACEMENT_MAX,
   STRATEGY_D_DISPLACEMENT_MIN,
   STRATEGY_D_MA20_BREAK_BUFFER,
-  STRATEGY_D_MIN_PRICE,
   STRATEGY_D_MAX_HOLD_MINUTES,
   STRATEGY_D_MA_PERIODS,
   STRATEGY_D_STOP_LOSS_PCT,
@@ -146,8 +145,7 @@ export const checkBuySignalD = (
       STRATEGY_D_VOLUME_RATIO,
     );
 
-    // 저가 코인 필터
-    if (currentPrice < STRATEGY_D_MIN_PRICE) return null;
+    // [4차 개선] 저가 코인 필터는 selectMarkets.ts(SELECT_MIN_PRICE)로 이관. 여기선 체크 불필요.
 
     const ma20_1m = calculateSMA(closedPrices.slice(-MA20_PERIOD), MA20_PERIOD);
     if (ma20_1m <= 0) return null;

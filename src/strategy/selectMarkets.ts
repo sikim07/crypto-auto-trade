@@ -1,5 +1,5 @@
 import { getAllMarkets, getTicker } from "../api/rest";
-import { TARGET_MARKET_COUNT } from "../config";
+import { TARGET_MARKET_COUNT, SELECT_MIN_PRICE } from "../config";
 import { logger } from "../logger";
 
 const LOG_SOURCE = "selectMarkets";
@@ -28,7 +28,13 @@ export const selectTopMarkets = async (): Promise<string[]> => {
     (a, b) => (b.acc_trade_price_24h ?? 0) - (a.acc_trade_price_24h ?? 0),
   );
   const topCount = Math.min(SELECT_TOP_BY_TRADE_PRICE, byTradePrice.length);
-  const top = byTradePrice.slice(0, topCount);
+  // [4차 개선] 최소 단가 필터: SELECT_MIN_PRICE(200원) 미만 코인 제외.
+  // 기존 전략 D에서만 적용하던 저가 코인 차단을 종목 선정 단계로 이관해 전략 무관하게 일괄 적용.
+  // 200원 미만 코인은 1원 틱이 수익률 0.5~1.7%에 해당하여 수수료 구조상 안정적 수익이 어려움.
+  // (기준값·이관 근거 상세: config.ts SELECT_MIN_PRICE 주석 참조)
+  const top = byTradePrice
+    .slice(0, topCount)
+    .filter((t) => (t.trade_price ?? 0) >= SELECT_MIN_PRICE);
 
   const byVolatility = top
     .map((t) => ({
