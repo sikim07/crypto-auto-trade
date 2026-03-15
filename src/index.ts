@@ -827,16 +827,50 @@ const run = async (): Promise<void> => {
         );
         const res = await executeMarketBuy(ACCESS_KEY, SECRET_KEY, market);
         if (res.ok && res.order) {
+          /**
+           * ──────────────────────────────────────────────────────────────
+           * [5차 개선] 매수 후 수량 0 포지션 잠금 방지
+           *
+           * [수정 이유]
+           *   기존 코드: fetchVolume 2회 재조회 후 여전히 0이어도 경고 로그만 찍고
+           *   volume="0" 상태로 포지션을 생성. 이후 매도 신호 발생 시
+           *   executeMarketSell(volume:"0") → order.ts에서 "매도 수량 0" 반환(ok:false) →
+           *   오류 로그만 출력하고 포지션 유지 → 다음 틱에서 동일 반복 → 영구 잠금.
+           *   봇 재기동 없이는 해제 불가 (실제 코인은 계좌에 있으나 매도 불가 상태).
+           *
+           * [변경 내용]
+           *   1. 재조회 1차(300ms), 2차(1000ms): 총 3회 시도로 확장
+           *      (업비트 API 반영 지연이 최대 1~2초 수준인 점을 감안)
+           *   2. 3회 후에도 0이면 → error 로그 + return으로 포지션 생성 자체를 중단
+           *      (코인은 계좌에 존재하므로 수동 매도 필요 — 로그에 안내 포함)
+           *
+           * [주의]
+           *   이 return은 finally { isBuying = false } 를 거쳐 정상 종료됨.
+           *   포지션이 생성되지 않으므로 다음 매수 신호는 정상적으로 처리됨.
+           *   단, 실제로 매수된 코인이 계좌에 있으므로 Upbit 앱에서 수동 매도 필요.
+           *
+           * [앞으로 확인할 것]
+           *   - "[매수] ... 수량 확인 실패" error 로그 빈도 모니터링.
+           *   - 로그가 자주 발생하면 대기 시간을 추가하거나 재조회 횟수 증가 검토.
+           * ──────────────────────────────────────────────────────────────
+           */
           let vol = await fetchVolume(ACCESS_KEY, SECRET_KEY, market);
           if (parseFloat(vol) <= 0) {
             await sleep(300);
             vol = await fetchVolume(ACCESS_KEY, SECRET_KEY, market);
-            if (parseFloat(vol) <= 0) {
-              logger.warn(
-                LOG_SOURCE,
-                "매수 체결 후 보유 수량 0 - 계정 반영 지연. 수량 재조회 실패.",
-              );
-            }
+          }
+          if (parseFloat(vol) <= 0) {
+            await sleep(1000);
+            vol = await fetchVolume(ACCESS_KEY, SECRET_KEY, market);
+          }
+          if (parseFloat(vol) <= 0) {
+            logger.error(
+              LOG_SOURCE,
+              "[매수] [전략%s] 체결 후 보유 수량 확인 실패: %s — 포지션 미등록. Upbit 앱에서 수동 매도 필요.",
+              strategy ?? "legacy",
+              market,
+            );
+            return;
           }
           const avgBuyPrice = await fetchAvgBuyPrice(
             ACCESS_KEY,
