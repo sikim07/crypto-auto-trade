@@ -7,6 +7,8 @@ import {
   COST_PCT,
   STRATEGY_B_STOP_LOSS_PCT,
   STRATEGY_B_MAX_HOLD_MINUTES,
+  STRATEGY_B_TRAILING_ACTIVATE_PCT,
+  STRATEGY_B_TRAILING_OFFSET_PCT,
   RSI_TAKE_PROFIT_MIN_PCT,
 } from "../config";
 import type { BuySignalResult, SellSignalResult } from "./signal";
@@ -199,6 +201,33 @@ export const checkSellSignalB = (
       shouldSell: true,
       reason: `전략B 최대 보유시간 초과 (${holdMin.toFixed(0)}분, 순수익 ${netPct.toFixed(2)}%)`,
     };
+  }
+
+  // [5차 개선] 트레일링 스톱 — +0.8% 도달 후 고점 대비 0.5% 하락 시 익절
+  // RSI 70 익절보다 먼저 체크해 수익 구간에서 더 빠른 청산 가능
+  if (position.trailingActivated && position.highestPrice != null) {
+    const threshold =
+      position.highestPrice * (1 - STRATEGY_B_TRAILING_OFFSET_PCT / 100);
+    if (currentPrice <= threshold) {
+      logger.info(
+        LOG_SOURCE,
+        "[시그널] %s | 트레일링 스톱 (고점 %s%% → 현재 %s%%)",
+        market,
+        getNetProfitPct(position.buyPrice, position.highestPrice).toFixed(2),
+        netPct.toFixed(2),
+      );
+      logger.info(
+        LOG_SOURCE,
+        "[BT] B 매도 type=트레일링 maxPct=%s curPct=%s offsetPct=%s",
+        getNetProfitPct(position.buyPrice, position.highestPrice).toFixed(2),
+        netPct.toFixed(2),
+        String(STRATEGY_B_TRAILING_OFFSET_PCT),
+      );
+      return {
+        shouldSell: true,
+        reason: `전략B 트레일링 스톱 (고점 ${getNetProfitPct(position.buyPrice, position.highestPrice).toFixed(2)}% → 현재 ${netPct.toFixed(2)}%)`,
+      };
+    }
   }
 
   const candles1m = getClosed1mCandles(market);

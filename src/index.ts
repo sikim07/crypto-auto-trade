@@ -29,7 +29,9 @@ import {
   CANDLE_REFRESH_INTERVAL_MS,
   RE_SELECT_AFTER_NO_BUY_MINUTES,
   DAILY_MAX_LOSS_PCT,
+  STRATEGY_B_TRAILING_ACTIVATE_PCT,
   STRATEGY_C_TRAILING_ACTIVATE_PCT,
+  STRATEGY_C_LOSS_COOLDOWN_MS,
   STRATEGY_D_LOSS_COOLDOWN_MS,
   STRATEGY_F_COOLDOWN_MS,
   STRATEGY_F_LOSS_COOLDOWN_MS,
@@ -71,6 +73,10 @@ let dailyLimitLogged = false;
 /** 마지막으로 수신한 종목별 가격 (포지션 모니터링용) */
 const lastPrices: Record<string, number> = {};
 
+/** 전략 C 손실 종목 쿨다운 (종목별 마지막 손실 거래 시각) — [5차 개선] */
+const strategyCLossCooldown: Record<string, number> = {};
+/** 전략 C 쿨다운 차단 로그 쓰로틀 (종목별 마지막 로그 시각) */
+const strategyCLossCooldownLastLog: Record<string, number> = {};
 /** 전략 D 손실 종목 쿨다운 (종목별 마지막 손실 거래 시각) */
 const lossCooldown: Record<string, number> = {};
 /** 전략 D 쿨다운 차단 로그 쓰로틀 (종목별 마지막 로그 시각) */
@@ -349,6 +355,30 @@ const run = async (): Promise<void> => {
             }
           }
         }
+        // [5차 개선] 전략 B 트레일링 스톱 — 포지션 고점 추적
+        // 검증 포인트: [BT] B 트레일링 활성화 로그가 +0.8% 근처에서 찍히는지, 이후 트레일링 매도로
+        //   연결되는지 확인. 트레일링 vs RSI70 익절 vs 데드크로스 매도 비율을 로그로 비교 가능.
+        if (position.strategy === "B") {
+          if (curNetPct >= STRATEGY_B_TRAILING_ACTIVATE_PCT) {
+            if (!position.trailingActivated) {
+              // 최초 활성화 시 1회만 로그 — 이후 실제 트레일링 매도([BT] B 매도 type=트레일링)와 대조
+              logger.info(
+                LOG_SOURCE,
+                "[BT] B 트레일링 활성화: %s 순수익 %s%% (기준 %s%%)",
+                market,
+                curNetPct.toFixed(2),
+                String(STRATEGY_B_TRAILING_ACTIVATE_PCT),
+              );
+              position.trailingActivated = true;
+            }
+            if (
+              position.highestPrice == null ||
+              price > position.highestPrice
+            ) {
+              position.highestPrice = price;
+            }
+          }
+        }
 
         let sellSignal: {
           shouldSell: boolean;
@@ -423,6 +453,16 @@ const run = async (): Promise<void> => {
               strategyCumulativeKrw[strategyTag] =
                 (strategyCumulativeKrw[strategyTag] ?? 0) + tradeProfitKrw;
 
+              // [5차 개선] 전략 C 손실 종목 쿨다운 등록 — 손실 매도 후 30분 재진입 차단
+              if (strategyTag === "C" && finalNetPct < 0) {
+                strategyCLossCooldown[position.market] = Date.now();
+                logger.info(
+                  LOG_SOURCE,
+                  "[쿨다운] 전략C 손실 종목 등록: %s (순수익 %s%%)",
+                  position.market,
+                  finalNetPct.toFixed(2),
+                );
+              }
               // 전략 D 손실 종목 쿨다운 등록
               if (strategyTag === "D" && finalNetPct < 0) {
                 lossCooldown[position.market] = Date.now();
@@ -624,10 +664,46 @@ const run = async (): Promise<void> => {
         buyB?.shouldBuy || !STRATEGY_A_ENABLED
           ? null
           : checkBuySignalA(market, price);
-      const buyC =
-        buyB?.shouldBuy || buyA?.shouldBuy || !STRATEGY_C_ENABLED
-          ? null
-          : checkBuySignalC(market, price);
+
+      // [5차 개선] 전략 C 쿨다운 체크 — 손실 매도 후 30분 재진입 차단
+      let buyC = null;
+      if (
+        STRATEGY_C_ENABLED &&
+        !(buyB?.shouldBuy || buyA?.shouldBuy)
+      ) {
+        const cCooldownTime = strategyCLossCooldown[market];
+        if (
+          cCooldownTime &&
+          Date.now() - cCooldownTime < STRATEGY_C_LOSS_COOLDOWN_MS
+        ) {
+          const now = Date.now();
+          const lastLog = strategyCLossCooldownLastLog[market] ?? 0;
+          if (now - lastLog >= 5 * 60_000) {
+            const remainingMin = Math.ceil(
+              (STRATEGY_C_LOSS_COOLDOWN_MS - (now - cCooldownTime)) / 60_000,
+            );
+            logger.debug(
+              LOG_SOURCE,
+              "[쿨다운] 전략C 진입 차단: %s (남은 시간 %s분)",
+              market,
+              remainingMin,
+            );
+            strategyCLossCooldownLastLog[market] = now;
+          }
+        } else {
+          // 쿨다운 만료 시 맵에서 제거 후 재진입 허용 — [BT] 로그로 쿨다운 효과 검증 가능
+          if (cCooldownTime) {
+            logger.info(
+              LOG_SOURCE,
+              "[BT] C 쿨다운 만료 재진입 허용: %s",
+              market,
+            );
+            delete strategyCLossCooldown[market];
+            delete strategyCLossCooldownLastLog[market];
+          }
+          buyC = checkBuySignalC(market, price);
+        }
+      }
 
       // 전략 D 쿨다운 체크
       let buyD = null;
@@ -826,8 +902,8 @@ const run = async (): Promise<void> => {
             strategy,
             entryLow,
             entryAtr,
-            highestPrice: strategy === "C" ? price : undefined,
-            trailingActivated: strategy === "C" ? false : undefined,
+            highestPrice: strategy === "C" || strategy === "B" ? price : undefined,
+            trailingActivated: strategy === "C" || strategy === "B" ? false : undefined,
           };
           currentMarkets = [market];
           unsubscribeTicker("매수 체결로 인한 종목 구독 해제");
