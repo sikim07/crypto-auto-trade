@@ -9,6 +9,7 @@ import {
   STRATEGY_B_MAX_HOLD_MINUTES,
   STRATEGY_B_TRAILING_ACTIVATE_PCT,
   STRATEGY_B_TRAILING_OFFSET_PCT,
+  STRATEGY_B_RSI_MAX,
   RSI_TAKE_PROFIT_MIN_PCT,
 } from "../config";
 import type { BuySignalResult, SellSignalResult } from "./signal";
@@ -41,6 +42,42 @@ const RSI_50 = 50;
 const RSI_40_DIVERGENCE = 40;
 const RSI_70 = 70;
 const DIVERGENCE_LOOKBACK = 25;
+
+/**
+ * [6차 개선] RSI 상한 초과 스킵 상태 (마켓별) — 전환 시점에만 로그.
+ * 전략D의 logRsiMaxSkipTransition과 동일한 패턴.
+ * 수집 목적: RSI 상한 차단 빈도 및 차단 해제 시점 확인 → 임계값 조정 판단.
+ */
+const rsiMaxSkipStateByMarketB = new Map<string, boolean>();
+
+function logBRsiMaxSkipTransition(
+  market: string,
+  isSkipping: boolean,
+  rsiCur: number,
+): void {
+  const wasSkipping = rsiMaxSkipStateByMarketB.get(market) ?? false;
+  if (isSkipping) {
+    if (!wasSkipping) {
+      logger.info(
+        LOG_SOURCE,
+        "[BT] B 매수 스킵 RSI상한초과 — 시작 rsiCur=%s max=%s",
+        rsiCur.toFixed(1),
+        String(STRATEGY_B_RSI_MAX),
+      );
+      rsiMaxSkipStateByMarketB.set(market, true);
+    }
+    return;
+  }
+  if (wasSkipping) {
+    logger.info(
+      LOG_SOURCE,
+      "[BT] B 매수 스킵 RSI상한초과 해제 — 끝 rsiCur=%s max=%s",
+      rsiCur.toFixed(1),
+      String(STRATEGY_B_RSI_MAX),
+    );
+    rsiMaxSkipStateByMarketB.set(market, false);
+  }
+}
 
 /** 최근 lookback 봉 내에서 상승 다이버전스(가격 저점 하락, RSI 저점 상승) 존재 여부 */
 function hasBullishDivergence(
@@ -113,6 +150,15 @@ export const checkBuySignalB = (
       );
     const threshold = withDivergence ? RSI_40_DIVERGENCE : RSI_50;
     if (rsiPrev >= threshold || rsiCur < threshold) return null;
+
+    // [6차 개선] RSI 상한 차단: 과매수 구간에서의 신규 진입은 손익비 불리.
+    // RSI > STRATEGY_B_RSI_MAX(65)이면 매수하지 않음.
+    // 전환 시점에만 로그 → 매 틱마다 찍히는 스팸 방지.
+    if (rsiCur > STRATEGY_B_RSI_MAX) {
+      logBRsiMaxSkipTransition(market, true, rsiCur);
+      return null;
+    }
+    logBRsiMaxSkipTransition(market, false, rsiCur);
 
     logger.info(
       LOG_SOURCE,

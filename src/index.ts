@@ -29,7 +29,9 @@ import {
   CANDLE_REFRESH_INTERVAL_MS,
   RE_SELECT_AFTER_NO_BUY_MINUTES,
   DAILY_MAX_LOSS_PCT,
+  DAILY_LOSS_BUFFER_PCT,
   STRATEGY_B_TRAILING_ACTIVATE_PCT,
+  STRATEGY_B_LOSS_COOLDOWN_MS,
   STRATEGY_C_TRAILING_ACTIVATE_PCT,
   STRATEGY_C_LOSS_COOLDOWN_MS,
   STRATEGY_D_LOSS_COOLDOWN_MS,
@@ -73,6 +75,12 @@ let dailyLimitLogged = false;
 /** 마지막으로 수신한 종목별 가격 (포지션 모니터링용) */
 const lastPrices: Record<string, number> = {};
 
+/**
+ * 전략 B 손실 종목 쿨다운 (종목별 마지막 손실 거래 시각) — [5차 개선]
+ * 손절 후 10분간 동일 종목 B 재진입 차단. 급락 중 골든크로스 연속 루프 방지.
+ * 수집: "[쿨다운] 전략B 손실 종목 등록" 로그 빈도로 차단 효과 확인.
+ */
+const strategyBLossCooldown: Record<string, number> = {};
 /** 전략 C 손실 종목 쿨다운 (종목별 마지막 손실 거래 시각) — [5차 개선] */
 const strategyCLossCooldown: Record<string, number> = {};
 /** 전략 C 쿨다운 차단 로그 쓰로틀 (종목별 마지막 로그 시각) */
@@ -452,6 +460,17 @@ const run = async (): Promise<void> => {
               strategyCumulativeKrw[strategyTag] =
                 (strategyCumulativeKrw[strategyTag] ?? 0) + tradeProfitKrw;
 
+              // [5차 개선] 전략 B 손실 종목 쿨다운 등록 — 손절 후 10분 재진입 차단
+              // 이유: 급락 중 골든크로스 연속 발생 → 손절 직후 즉시 재매수 루프 방지
+              if (strategyTag === "B" && finalNetPct < 0) {
+                strategyBLossCooldown[position.market] = Date.now();
+                logger.info(
+                  LOG_SOURCE,
+                  "[쿨다운] 전략B 손실 종목 등록: %s (순수익 %s%%)",
+                  position.market,
+                  finalNetPct.toFixed(2),
+                );
+              }
               // [5차 개선] 전략 C 손실 종목 쿨다운 등록 — 손실 매도 후 30분 재진입 차단
               if (strategyTag === "C" && finalNetPct < 0) {
                 strategyCLossCooldown[position.market] = Date.now();
@@ -583,13 +602,32 @@ const run = async (): Promise<void> => {
       if (!currentMarkets.includes(market)) return;
       if (isBuying) return;
 
-      if (dailyLossPct <= DAILY_MAX_LOSS_PCT) {
+      // [6차 개선] 일일 손실 한도 + 잔여 여력 버퍼 이중 체크
+      // - 하드 한도: dailyLossPct <= DAILY_MAX_LOSS_PCT(-5%)
+      // - 버퍼 체크: 잔여 여력이 DAILY_LOSS_BUFFER_PCT(1.5%p) 미만이면 추가 차단
+      //   실질 차단선 = -5% + 1.5% = -3.5%
+      //   이유: -4.90% 상태에서 진입 허용 → 손절 -1.61% → -6.51% 초과 사례 방지
+      const remainingDailyPct = dailyLossPct - DAILY_MAX_LOSS_PCT;
+      if (
+        dailyLossPct <= DAILY_MAX_LOSS_PCT ||
+        remainingDailyPct < DAILY_LOSS_BUFFER_PCT
+      ) {
         if (!dailyLimitLogged) {
-          logger.warn(
-            LOG_SOURCE,
-            "일일 최대 손실 한도 도달 (누적 %s%), 매수 중단",
-            dailyLossPct.toFixed(2),
-          );
+          if (dailyLossPct <= DAILY_MAX_LOSS_PCT) {
+            logger.warn(
+              LOG_SOURCE,
+              "일일 최대 손실 한도 도달 (누적 %s%), 매수 중단",
+              dailyLossPct.toFixed(2),
+            );
+          } else {
+            logger.warn(
+              LOG_SOURCE,
+              "일일 잔여 여력 부족 (누적 %s%%, 잔여 %s%%p < 버퍼 %s%%), 매수 중단",
+              dailyLossPct.toFixed(2),
+              remainingDailyPct.toFixed(2),
+              String(DAILY_LOSS_BUFFER_PCT),
+            );
+          }
           dailyLimitLogged = true;
         }
         return;
@@ -658,7 +696,28 @@ const run = async (): Promise<void> => {
       //   - 성과가 좋은 전략만 남기고 나머지는 false로 전환
       //   - false로 바꿔도 이미 진입한 포지션의 매도 로직에는 영향 없음
       //   - 전략 우선순위(B가 1순위)가 현재 매매 패턴에 적합한지 주기적 재검토
-      const buyB = STRATEGY_B_ENABLED ? checkBuySignalB(market, price) : null;
+      // [6차 개선] 전략 B 쿨다운 체크 — 손실 매도 후 10분 재진입 차단
+      // C/D와 동일 패턴. 만료 시 맵에서 제거 후 "[BT] B 쿨다운 만료" 로그로 효과 검증.
+      let buyB = null;
+      if (STRATEGY_B_ENABLED) {
+        const bCooldownTime = strategyBLossCooldown[market];
+        if (
+          bCooldownTime &&
+          Date.now() - bCooldownTime < STRATEGY_B_LOSS_COOLDOWN_MS
+        ) {
+          // 쿨다운 중 — 진입 차단 (만료 시 아래에서 로그)
+        } else {
+          if (bCooldownTime) {
+            logger.info(
+              LOG_SOURCE,
+              "[BT] B 쿨다운 만료 재진입 허용: %s",
+              market,
+            );
+            delete strategyBLossCooldown[market];
+          }
+          buyB = checkBuySignalB(market, price);
+        }
+      }
       const buyA =
         buyB?.shouldBuy || !STRATEGY_A_ENABLED
           ? null
@@ -666,10 +725,7 @@ const run = async (): Promise<void> => {
 
       // [5차 개선] 전략 C 쿨다운 체크 — 손실 매도 후 30분 재진입 차단
       let buyC = null;
-      if (
-        STRATEGY_C_ENABLED &&
-        !(buyB?.shouldBuy || buyA?.shouldBuy)
-      ) {
+      if (STRATEGY_C_ENABLED && !(buyB?.shouldBuy || buyA?.shouldBuy)) {
         const cCooldownTime = strategyCLossCooldown[market];
         if (
           cCooldownTime &&
@@ -878,8 +934,10 @@ const run = async (): Promise<void> => {
             strategy,
             entryLow,
             entryAtr,
-            highestPrice: strategy === "C" || strategy === "B" ? price : undefined,
-            trailingActivated: strategy === "C" || strategy === "B" ? false : undefined,
+            highestPrice:
+              strategy === "C" || strategy === "B" ? price : undefined,
+            trailingActivated:
+              strategy === "C" || strategy === "B" ? false : undefined,
           };
           logger.info(
             LOG_SOURCE,

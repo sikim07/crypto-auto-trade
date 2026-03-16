@@ -1,11 +1,17 @@
 import { getCandles } from "../data/candleWindow";
-import { calculateBollingerBands, getVolumeRatio } from "../indicators";
+import {
+  calculateBollingerBands,
+  getVolumeRatio,
+  calculateRSI,
+} from "../indicators";
 import {
   BB_PERIOD,
+  RSI_PERIOD,
   STRATEGY_C_BB_SQUEEZE_RATIO,
   STRATEGY_C_VOLUME_RATIO,
   STRATEGY_C_VOLUME_AVG_PERIOD,
   STRATEGY_C_BODY_RATIO_MIN,
+  STRATEGY_C_RSI_MAX,
   STRATEGY_C_TRAILING_ACTIVATE_PCT,
   STRATEGY_C_TRAILING_OFFSET_PCT,
   STRATEGY_C_STOP_LOSS_PCT,
@@ -96,6 +102,17 @@ export const checkBuySignalC = (
       STRATEGY_C_VOLUME_RATIO,
     );
 
+    // [6차 개선] RSI 상한 체크: 과매수 구간(> STRATEGY_C_RSI_MAX) 거짓 돌파 방지.
+    // BT 로그에 rsiCur 포함 → 손절/익절 케이스별 RSI 분포 수집 후 임계값 조정 판단.
+    // 데이터 부족 시 우선 상한만 적용, 이후 하한(약세 구간 돌파 차단) 추가 여부 검토.
+    let rsiCurC: number | undefined;
+    if (closedPrices.length >= RSI_PERIOD + 1) {
+      rsiCurC = calculateRSI(closedPrices.slice(-(RSI_PERIOD + 1)));
+      if (rsiCurC > STRATEGY_C_RSI_MAX) {
+        return null;
+      }
+    }
+
     logger.info(
       LOG_SOURCE,
       "[시그널] %s | 매수 조건 충족 | 가격 %s | BB수축+상단돌파+거래량 %s",
@@ -105,10 +122,11 @@ export const checkBuySignalC = (
     );
     logger.info(
       LOG_SOURCE,
-      "[BT] C 매수 bandWidth=%s volRatio=%s bodyRatio=%s price=%s",
+      "[BT] C 매수 bandWidth=%s volRatio=%s bodyRatio=%s rsiCur=%s price=%s",
       bandWidth.toFixed(4),
       volRatio.toFixed(2),
       bodyRatio.toFixed(2),
+      rsiCurC != null ? rsiCurC.toFixed(1) : "N/A",
       currentPrice.toFixed(0),
     );
     return {
