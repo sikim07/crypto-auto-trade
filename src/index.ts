@@ -252,23 +252,7 @@ const run = async (): Promise<void> => {
         }
       }
 
-      if (position) {
-        const curPrice = lastPrices[position.market];
-        if (curPrice) {
-          const netPct = getNetProfitPct(position.buyPrice, curPrice);
-          const holdMin = (Date.now() - position.buyTime) / 60_000;
-          logger.info(
-            LOG_SOURCE,
-            "[포지션] %s | 매수가 %s | 현재가 %s | 순수익 %s% | 최대 %s% | 보유 %s분",
-            position.market,
-            position.buyPrice.toFixed(0),
-            curPrice.toFixed(0),
-            netPct.toFixed(2),
-            position.maxNetPct.toFixed(2),
-            holdMin.toFixed(1),
-          );
-        }
-      } else {
+      if (!position) {
         const marketsStr = currentMarkets.join(", ");
         const dailyProfitStr =
           dailyProfitKrw >= 0
@@ -425,6 +409,21 @@ const run = async (): Promise<void> => {
           isSelling = true;
           const strategyTag = position.strategy ?? "legacy";
           try {
+            {
+              const curPrice = lastPrices[position.market] ?? price;
+              const netPct = getNetProfitPct(position.buyPrice, curPrice);
+              const holdMin = (Date.now() - position.buyTime) / 60_000;
+              logger.info(
+                LOG_SOURCE,
+                "[포지션] %s | 매수가 %s | 현재가 %s | 순수익 %s% | 최대 %s% | 보유 %s분",
+                position.market,
+                position.buyPrice.toFixed(0),
+                curPrice.toFixed(0),
+                netPct.toFixed(2),
+                position.maxNetPct.toFixed(2),
+                holdMin.toFixed(1),
+              );
+            }
             logger.info(
               LOG_SOURCE,
               "[매도] [전략%s] 신호: %s",
@@ -676,20 +675,6 @@ const run = async (): Promise<void> => {
           cCooldownTime &&
           Date.now() - cCooldownTime < STRATEGY_C_LOSS_COOLDOWN_MS
         ) {
-          const now = Date.now();
-          const lastLog = strategyCLossCooldownLastLog[market] ?? 0;
-          if (now - lastLog >= 5 * 60_000) {
-            const remainingMin = Math.ceil(
-              (STRATEGY_C_LOSS_COOLDOWN_MS - (now - cCooldownTime)) / 60_000,
-            );
-            logger.debug(
-              LOG_SOURCE,
-              "[쿨다운] 전략C 진입 차단: %s (남은 시간 %s분)",
-              market,
-              remainingMin,
-            );
-            strategyCLossCooldownLastLog[market] = now;
-          }
         } else {
           // 쿨다운 만료 시 맵에서 제거 후 재진입 허용 — [BT] 로그로 쿨다운 효과 검증 가능
           if (cCooldownTime) {
@@ -716,20 +701,6 @@ const run = async (): Promise<void> => {
           cooldownTime &&
           Date.now() - cooldownTime < STRATEGY_D_LOSS_COOLDOWN_MS
         ) {
-          const now = Date.now();
-          const lastLog = lossCooldownLastLog[market] ?? 0;
-          if (now - lastLog >= 5 * 60_000) {
-            const remainingMin = Math.ceil(
-              (STRATEGY_D_LOSS_COOLDOWN_MS - (now - cooldownTime)) / 60_000,
-            );
-            logger.debug(
-              LOG_SOURCE,
-              "[쿨다운] 전략D 진입 차단: %s (남은 시간 %s분)",
-              market,
-              remainingMin,
-            );
-            lossCooldownLastLog[market] = now;
-          }
         } else {
           // 쿨다운 만료된 경우 맵에서 제거
           if (cooldownTime) {
@@ -771,36 +742,7 @@ const run = async (): Promise<void> => {
           Date.now() - fLossCooldownTime < STRATEGY_F_LOSS_COOLDOWN_MS;
 
         if (winBlocked || lossBlocked) {
-          const now = Date.now();
-          const lastLog = strategyFCooldownLastLog[market] ?? 0;
-          if (now - lastLog >= 5 * 60_000) {
-            const winRemaining = fWinCooldownTime
-              ? Math.max(
-                  0,
-                  Math.ceil(
-                    (STRATEGY_F_COOLDOWN_MS - (now - fWinCooldownTime)) /
-                      60_000,
-                  ),
-                )
-              : 0;
-            const lossRemaining = fLossCooldownTime
-              ? Math.max(
-                  0,
-                  Math.ceil(
-                    (STRATEGY_F_LOSS_COOLDOWN_MS - (now - fLossCooldownTime)) /
-                      60_000,
-                  ),
-                )
-              : 0;
-            const remainingMin = Math.max(winRemaining, lossRemaining);
-            logger.debug(
-              LOG_SOURCE,
-              "[쿨다운] 전략F 진입 차단: %s (남은 시간 %s분)",
-              market,
-              remainingMin,
-            );
-            strategyFCooldownLastLog[market] = now;
-          }
+          // 쿨다운 중 — 진입 차단 (만료 시 아래 else에서 로그)
         } else {
           // 만료된 쿨다운 맵에서 정리
           if (fWinCooldownTime) {
@@ -939,6 +881,16 @@ const run = async (): Promise<void> => {
             highestPrice: strategy === "C" || strategy === "B" ? price : undefined,
             trailingActivated: strategy === "C" || strategy === "B" ? false : undefined,
           };
+          logger.info(
+            LOG_SOURCE,
+            "[포지션] %s | 매수가 %s | 현재가 %s | 순수익 %s% | 최대 %s% | 보유 %s분",
+            market,
+            buyPriceForPosition.toFixed(0),
+            price.toFixed(0),
+            getNetProfitPct(buyPriceForPosition, price).toFixed(2),
+            (0).toFixed(2),
+            (0).toFixed(1),
+          );
           currentMarkets = [market];
           unsubscribeTicker("매수 체결로 인한 종목 구독 해제");
           subscribeTicker(
