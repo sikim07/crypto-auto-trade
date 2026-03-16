@@ -198,7 +198,7 @@ export const checkBuySignalF = (
     );
     if (!hasConfirmedBounce) return null;
 
-    // [조건 8] EMA21 기울기 필터 (2차 개선)
+    // [v3.2.20260306] [조건 8] EMA21 기울기 필터
     // 목적: EMA21이 수평/하향인 박스권 상단에서의 반복 진입 차단.
     //       EMA21이 상승 중일 때만 진입해 "눌림목 반등" 조건 실질화.
     // 로직: 직전 SLOPE_LOOKBACK+1개 봉의 EMA21 값으로 선형회귀 기울기 산출.

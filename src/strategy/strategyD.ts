@@ -145,7 +145,7 @@ export const checkBuySignalD = (
       STRATEGY_D_VOLUME_RATIO,
     );
 
-    // [4차 개선] 저가 코인 필터는 selectMarkets.ts(SELECT_MIN_PRICE)로 이관. 여기선 체크 불필요.
+    // [v3.4.20260312] 저가 코인 필터는 selectMarkets.ts(SELECT_MIN_PRICE)로 이관. 여기선 체크 불필요.
 
     const ma20_1m = calculateSMA(closedPrices.slice(-MA20_PERIOD), MA20_PERIOD);
     if (ma20_1m <= 0) return null;

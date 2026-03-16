@@ -45,7 +45,7 @@ export const STOP_LOSS_PCT_MAX = -1.5;
 
 /**
  * ──────────────────────────────────────────────────────────────
- * [4차 개선] 전략 B RSI 70 익절 시 최소 순수익 조건 적용
+ * [v3.4.20260312] 전략 B RSI 70 익절 시 최소 순수익 조건 적용
  *
  * [수정 이유]
  *   기존 전략 B의 RSI 70 하향 돌파 익절은 순수익 체크 없이 발동.
@@ -109,7 +109,7 @@ export const TRAILING_STOP_OFFSET_PCT = 0.5;
 export const DAILY_MAX_LOSS_PCT = -5;
 /**
  * ──────────────────────────────────────────────────────────────
- * [6차 개선] 일일 손실 잔여 여력 버퍼
+ * [v3.6.20260317] 일일 손실 잔여 여력 버퍼
  *
  * [배경]
  *   기존: dailyLossPct <= DAILY_MAX_LOSS_PCT(-5%)이면 매수 차단.
@@ -164,7 +164,7 @@ export const STRATEGY_C_ENABLED = true;
 export const STRATEGY_D_ENABLED = true;
 /**
  * ══════════════════════════════════════════════════════════════════
- * [5차 개선] 전략 E 영구 비활성화 — 2026-03-12~15 실전 결과 기반
+ * [v3.5.20260315] 전략 E 영구 비활성화 — 2026-03-12~15 실전 결과 기반
  * ══════════════════════════════════════════════════════════════════
  *
  * [비활성화 사유 — 데이터 기반]
@@ -210,7 +210,7 @@ export const STRATEGY_A_VOLUME_AVG_PERIOD = 5;
 export const STRATEGY_A_ATR_STOP_MULTIPLIER = 1.5;
 /** 전략 A 손절: 매수가 기준 최소 손절 거리 (%) — 이 값보다 가까운 손절가는 강제로 내림 */
 /**
- * [3차 개선] 1.0 → 1.3
+ * [v3.3.20260310] 1.0 → 1.3
  * 이유: SLIPPAGE_PCT 현실화(0.15→추후 0.30) 대응 및 1분봉 단기 변동성 흡수 공간 확보.
  *      이전 1.0% 기준에서 "최소거리보장" 손절이 진입 20초 만에 발동하는 사례 확인
  *      (2026-03-10 11:21: 87원 매수 → 86원 즉시 손절).
@@ -221,7 +221,7 @@ export const STRATEGY_A_ATR_STOP_MULTIPLIER = 1.5;
  */
 export const STRATEGY_A_MIN_STOP_DISTANCE_PCT = 1.3;
 /**
- * [3차 개선] 7 → 10
+ * [v3.3.20260310] 7 → 10
  * 이유: 역추세 반등 사이클이 완성되려면 7분으로는 부족한 케이스 반복 확인.
  *      (2026-03-10 14:04: 최대 +0.41% 도달 후 7분 시간초과 -0.14% 손실 마감).
  *      10분으로 연장해 BB 중앙 도달 가능성 확보. 단, 과도한 연장은 손실 누적 위험.
@@ -236,7 +236,7 @@ export const STRATEGY_A_BB_ENTRY_BUFFER = 1.01;
 export const STRATEGY_A_RSI_INTRACANDLE_THRESHOLD = 31;
 /**
  * ──────────────────────────────────────────────────────────────
- * [3차 개선 신규] 전략 A 트레일링 스톱
+ * [v3.3.20260310] 전략 A 트레일링 스톱
  *
  * [수정 이유]
  *   기존 A 전략 익절 조건이 "BB 중앙 도달" 단일 조건이어서,
@@ -265,7 +265,7 @@ export const STRATEGY_A_TRAILING_OFFSET_PCT = 0.5;
 export const STRATEGY_B_STOP_LOSS_PCT = -1.5;
 export const STRATEGY_B_MAX_HOLD_MINUTES = 12;
 /**
- * [5차 개선] 전략 B 트레일링 스톱 추가
+ * [v3.5.20260315] 전략 B 트레일링 스톱 추가
  *
  * [수정 이유]
  *   실전 분석 결과 전략 B의 평균 손실(-1.30%)이 평균 이익(+0.69%)보다 큼.
@@ -286,7 +286,7 @@ export const STRATEGY_B_TRAILING_ACTIVATE_PCT = 0.8;
 export const STRATEGY_B_TRAILING_OFFSET_PCT = 0.5;
 /**
  * ══════════════════════════════════════════════════════════════════
- * [6차 개선] 전략 B — 손절 쿨다운 + RSI 과매수 차단
+ * [v3.6.20260317] 전략 B — 손절 쿨다운 + RSI 과매수 차단
  * ══════════════════════════════════════════════════════════════════
  *
  * [배경]
@@ -330,7 +330,7 @@ export const STRATEGY_C_VOLUME_RATIO = 2.5;
 export const STRATEGY_C_VOLUME_AVG_PERIOD = 10;
 export const STRATEGY_C_BODY_RATIO_MIN = 0.6;
 /**
- * [3차 개선] TRAILING_ACTIVATE_PCT: 2 → 0.8, TRAILING_OFFSET_PCT: 1.5 → 0.5
+ * [v3.3.20260310] TRAILING_ACTIVATE_PCT: 2 → 0.8, TRAILING_OFFSET_PCT: 1.5 → 0.5
  *
  * [수정 이유]
  *   기존 활성화 기준 2%는 실제 최대 수익(0.8~1.2% 구간)보다 높아 트레일링이 한 번도
@@ -356,7 +356,7 @@ export const STRATEGY_C_STOP_LOSS_PCT = -1.5;
 export const STRATEGY_C_MAX_HOLD_MINUTES = 20;
 /**
  * ──────────────────────────────────────────────────────────────
- * [6차 개선] 전략 C 매수 RSI 상한
+ * [v3.6.20260317] 전략 C 매수 RSI 상한
  *
  * [배경]
  *   2026-03-16 실전 분석: BB 상단 돌파 7회 중 5회가 BB 중앙 하향 손절.
@@ -381,7 +381,7 @@ export const STRATEGY_C_MAX_HOLD_MINUTES = 20;
 /** 전략 C 매수 RSI 상한 — 이 값 초과 시 과매수 거짓 돌파로 판단해 매수하지 않음 */
 export const STRATEGY_C_RSI_MAX = 70;
 /**
- * [5차 개선] 전략 C 손실 종목 쿨다운 추가
+ * [v3.5.20260315] 전략 C 손실 종목 쿨다운 추가
  *
  * [수정 이유]
  *   실전 분석 결과 전략 C가 동일 종목(ENSO)에서 손절 후 즉시 재진입해
@@ -411,7 +411,7 @@ export const STRATEGY_D_DISPLACEMENT_MIN = 1.008;
 export const STRATEGY_D_MA20_BREAK_BUFFER = 0.008;
 /**
  * ──────────────────────────────────────────────────────────────
- * [4차 개선] 최소 단가 필터를 전략 D 전용에서 종목 선정 단계로 이관 + 기준값 상향
+ * [v3.4.20260312] 최소 단가 필터를 전략 D 전용에서 종목 선정 단계로 이관 + 기준값 상향
  *
  * [수정 이유]
  *   기존 STRATEGY_D_MIN_PRICE = 100이 전략 D 매수 체크(strategyD.ts)에서만 적용.
@@ -606,7 +606,7 @@ export const STRATEGY_F_TRAILING_TIGHTEN_OFFSET = 0.3;
 
 /**
  * ──────────────────────────────────────────────────────────────
- * [2차 개선] EMA21 기울기 필터
+ * [v3.2.20260306] EMA21 기울기 필터
  *
  * [수정 이유]
  *   로그 분석 결과 KRW-KITE에 3회 연속 진입 시 매번 EMA21이 수평(456원 고정) 상태.
@@ -692,7 +692,7 @@ export const REGIME_BTC_MA_FAST = 5;
  */
 export const REGIME_BTC_MA_SLOW = 30;
 /**
- * [3차 개선 신규] BTC MA 추세 필터 히스테리시스 밴드
+ * [v3.3.20260310] BTC MA 추세 필터 히스테리시스 밴드
  *
  * [수정 이유]
  *   기존: maFast < maSlow 이면 차단, maFast >= maSlow 이면 즉시 해제 — 동일 기준선.

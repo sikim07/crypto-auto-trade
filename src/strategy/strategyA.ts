@@ -166,7 +166,7 @@ const getNetProfitPct = (buyPrice: number, currentPrice: number): number => {
 
 /** 전략 A 매도: 익절 BB 중앙 터치, 손절 = 진입캔들 저점 이탈 또는 진입가-ATR×배수 도달(둘 중 먼저)
  *
- * [3차 개선] 트레일링 스톱 신규 추가 (STRATEGY_A_TRAILING_ACTIVATE_PCT / TRAILING_OFFSET_PCT)
+ * [v3.3.20260310] 트레일링 스톱 신규 추가 (STRATEGY_A_TRAILING_ACTIVATE_PCT / TRAILING_OFFSET_PCT)
  *   매도 체크 순서: 최대보유 → 손절 → 트레일링(신규) → BB중앙 익절
  *   이유: 기존에는 BB중앙 도달 여부가 유일한 익절 조건이어서, BB중앙 미도달 시
  *         최대보유 시간초과로만 청산되어 수익 기회를 낭비하는 구조였음.
@@ -248,7 +248,7 @@ export const checkSellSignalA = (
     };
   }
 
-  // [3차 개선] 트레일링 스톱: BB중앙 익절보다 먼저 체크
+  // [v3.3.20260310] 트레일링 스톱: BB중앙 익절보다 먼저 체크
   // +STRATEGY_A_TRAILING_ACTIVATE_PCT% 도달 후 활성화 → 고점 대비 TRAILING_OFFSET_PCT% 하락 시 청산
   const netPct = getNetProfitPct(buyPrice, currentPrice);
   if (position.maxNetPct >= STRATEGY_A_TRAILING_ACTIVATE_PCT) {

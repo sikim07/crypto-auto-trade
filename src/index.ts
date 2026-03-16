@@ -76,12 +76,12 @@ let dailyLimitLogged = false;
 const lastPrices: Record<string, number> = {};
 
 /**
- * 전략 B 손실 종목 쿨다운 (종목별 마지막 손실 거래 시각) — [5차 개선]
+ * [v3.6.20260317] 전략 B 손실 종목 쿨다운 (종목별 마지막 손실 거래 시각)
  * 손절 후 10분간 동일 종목 B 재진입 차단. 급락 중 골든크로스 연속 루프 방지.
  * 수집: "[쿨다운] 전략B 손실 종목 등록" 로그 빈도로 차단 효과 확인.
  */
 const strategyBLossCooldown: Record<string, number> = {};
-/** 전략 C 손실 종목 쿨다운 (종목별 마지막 손실 거래 시각) — [5차 개선] */
+/** [v3.5.20260315] 전략 C 손실 종목 쿨다운 (종목별 마지막 손실 거래 시각) */
 const strategyCLossCooldown: Record<string, number> = {};
 /** 전략 C 쿨다운 차단 로그 쓰로틀 (종목별 마지막 로그 시각) */
 const strategyCLossCooldownLastLog: Record<string, number> = {};
@@ -347,7 +347,7 @@ const run = async (): Promise<void> => {
             }
           }
         }
-        // [5차 개선] 전략 B 트레일링 스톱 — 포지션 고점 추적
+        // [v3.5.20260315] 전략 B 트레일링 스톱 — 포지션 고점 추적
         // 검증 포인트: [BT] B 트레일링 활성화 로그가 +0.8% 근처에서 찍히는지, 이후 트레일링 매도로
         //   연결되는지 확인. 트레일링 vs RSI70 익절 vs 데드크로스 매도 비율을 로그로 비교 가능.
         if (position.strategy === "B") {
@@ -460,7 +460,7 @@ const run = async (): Promise<void> => {
               strategyCumulativeKrw[strategyTag] =
                 (strategyCumulativeKrw[strategyTag] ?? 0) + tradeProfitKrw;
 
-              // [5차 개선] 전략 B 손실 종목 쿨다운 등록 — 손절 후 10분 재진입 차단
+              // [v3.6.20260317] 전략 B 손실 종목 쿨다운 등록 — 손절 후 10분 재진입 차단
               // 이유: 급락 중 골든크로스 연속 발생 → 손절 직후 즉시 재매수 루프 방지
               if (strategyTag === "B" && finalNetPct < 0) {
                 strategyBLossCooldown[position.market] = Date.now();
@@ -471,7 +471,7 @@ const run = async (): Promise<void> => {
                   finalNetPct.toFixed(2),
                 );
               }
-              // [5차 개선] 전략 C 손실 종목 쿨다운 등록 — 손실 매도 후 30분 재진입 차단
+              // [v3.5.20260315] 전략 C 손실 종목 쿨다운 등록 — 손실 매도 후 30분 재진입 차단
               if (strategyTag === "C" && finalNetPct < 0) {
                 strategyCLossCooldown[position.market] = Date.now();
                 logger.info(
@@ -602,7 +602,7 @@ const run = async (): Promise<void> => {
       if (!currentMarkets.includes(market)) return;
       if (isBuying) return;
 
-      // [6차 개선] 일일 손실 한도 + 잔여 여력 버퍼 이중 체크
+      // [v3.6.20260317] 일일 손실 한도 + 잔여 여력 버퍼 이중 체크
       // - 하드 한도: dailyLossPct <= DAILY_MAX_LOSS_PCT(-5%)
       // - 버퍼 체크: 잔여 여력이 DAILY_LOSS_BUFFER_PCT(1.5%p) 미만이면 추가 차단
       //   실질 차단선 = -5% + 1.5% = -3.5%
@@ -696,7 +696,7 @@ const run = async (): Promise<void> => {
       //   - 성과가 좋은 전략만 남기고 나머지는 false로 전환
       //   - false로 바꿔도 이미 진입한 포지션의 매도 로직에는 영향 없음
       //   - 전략 우선순위(B가 1순위)가 현재 매매 패턴에 적합한지 주기적 재검토
-      // [6차 개선] 전략 B 쿨다운 체크 — 손실 매도 후 10분 재진입 차단
+      // [v3.6.20260317] 전략 B 쿨다운 체크 — 손실 매도 후 10분 재진입 차단
       // C/D와 동일 패턴. 만료 시 맵에서 제거 후 "[BT] B 쿨다운 만료" 로그로 효과 검증.
       let buyB = null;
       if (STRATEGY_B_ENABLED) {
@@ -723,7 +723,7 @@ const run = async (): Promise<void> => {
           ? null
           : checkBuySignalA(market, price);
 
-      // [5차 개선] 전략 C 쿨다운 체크 — 손실 매도 후 30분 재진입 차단
+      // [v3.5.20260315] 전략 C 쿨다운 체크 — 손실 매도 후 30분 재진입 차단
       let buyC = null;
       if (STRATEGY_C_ENABLED && !(buyB?.shouldBuy || buyA?.shouldBuy)) {
         const cCooldownTime = strategyCLossCooldown[market];
@@ -827,7 +827,7 @@ const run = async (): Promise<void> => {
         if (res.ok && res.order) {
           /**
            * ──────────────────────────────────────────────────────────────
-           * [5차 개선] 매수 후 수량 0 포지션 잠금 방지
+           * [v3.5.20260315] 매수 후 수량 0 포지션 잠금 방지
            *
            * [수정 이유]
            *   기존 코드: fetchVolume 2회 재조회 후 여전히 0이어도 경고 로그만 찍고

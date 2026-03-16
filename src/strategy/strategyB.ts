@@ -44,7 +44,7 @@ const RSI_70 = 70;
 const DIVERGENCE_LOOKBACK = 25;
 
 /**
- * [6차 개선] RSI 상한 초과 스킵 상태 (마켓별) — 전환 시점에만 로그.
+ * [v3.6.20260317] RSI 상한 초과 스킵 상태 (마켓별) — 전환 시점에만 로그.
  * 전략D의 logRsiMaxSkipTransition과 동일한 패턴.
  * 수집 목적: RSI 상한 차단 빈도 및 차단 해제 시점 확인 → 임계값 조정 판단.
  */
@@ -151,7 +151,7 @@ export const checkBuySignalB = (
     const threshold = withDivergence ? RSI_40_DIVERGENCE : RSI_50;
     if (rsiPrev >= threshold || rsiCur < threshold) return null;
 
-    // [6차 개선] RSI 상한 차단: 과매수 구간에서의 신규 진입은 손익비 불리.
+    // [v3.6.20260317] RSI 상한 차단: 과매수 구간에서의 신규 진입은 손익비 불리.
     // RSI > STRATEGY_B_RSI_MAX(65)이면 매수하지 않음.
     // 전환 시점에만 로그 → 매 틱마다 찍히는 스팸 방지.
     if (rsiCur > STRATEGY_B_RSI_MAX) {
@@ -249,7 +249,7 @@ export const checkSellSignalB = (
     };
   }
 
-  // [5차 개선] 트레일링 스톱 — +0.8% 도달 후 고점 대비 0.5% 하락 시 익절
+  // [v3.5.20260315] 트레일링 스톱 — +0.8% 도달 후 고점 대비 0.5% 하락 시 익절
   // RSI 70 익절보다 먼저 체크해 수익 구간에서 더 빠른 청산 가능
   if (position.trailingActivated && position.highestPrice != null) {
     const threshold =
@@ -289,7 +289,7 @@ export const checkSellSignalB = (
     const deadCross =
       macd.prevMacd >= macd.prevSignal && macd.macd < macd.signal;
     /*
-     * [4차 개선 검토 보류] 데드크로스 손절 조건 강화 — SELECT_MIN_PRICE=200 적용 후 재관찰 예정
+     * [v3.4.20260312] 데드크로스 손절 조건 강화 — SELECT_MIN_PRICE=200 적용 후 재관찰 예정
      *
      * [배경]
      *   로그 분석에서 ICX(58~59원) 데드크로스 손절 3연속 발생 (RSI 45.5, 45.8, 46.7).
@@ -339,7 +339,7 @@ export const checkSellSignalB = (
   const prevRsi = position.lastRsi ?? 0;
   if (typeof rsiCur === "number") {
     if (prevRsi >= RSI_70 && rsiCur < RSI_70) {
-      // [4차 개선] RSI 70 하향 돌파 익절 시 최소 순수익 조건 추가 (RSI_TAKE_PROFIT_MIN_PCT = 0.5%).
+      // [v3.4.20260312] RSI 70 하향 돌파 익절 시 최소 순수익 조건 추가 (RSI_TAKE_PROFIT_MIN_PCT = 0.5%).
       // 기존: 순수익 무관하게 RSI 70 하향만으로 매도 → "익절" 로그에도 실제 순수익 음수 케이스 발생.
       // (로그 분석: RSI 71.4→67.9 순수익 -0.25%, RSI 75.0→64.3 순수익 -0.61% 등 4건)
       // 공통 signal.ts의 checkSellSignal에는 이미 적용되어 있었으나 checkSellSignalB에서 누락됨.

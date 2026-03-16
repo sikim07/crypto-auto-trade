@@ -102,7 +102,7 @@ export const checkBuySignalC = (
       STRATEGY_C_VOLUME_RATIO,
     );
 
-    // [6차 개선] RSI 상한 체크: 과매수 구간(> STRATEGY_C_RSI_MAX) 거짓 돌파 방지.
+    // [v3.6.20260317] RSI 상한 체크: 과매수 구간(> STRATEGY_C_RSI_MAX) 거짓 돌파 방지.
     // BT 로그에 rsiCur 포함 → 손절/익절 케이스별 RSI 분포 수집 후 임계값 조정 판단.
     // 데이터 부족 시 우선 상한만 적용, 이후 하한(약세 구간 돌파 차단) 추가 여부 검토.
     let rsiCurC: number | undefined;
@@ -153,7 +153,7 @@ const getNetProfitPct = (buyPrice: number, currentPrice: number): number => {
 /**
  * 전략 C 매도: 고정 손절 → 최대 보유 → 트레일링 스톱(신규 우선) → BB 중앙선(마감 봉 기준)
  *
- * [3차 개선] 트레일링 체크 순서를 BB중앙 이전으로 이동 (config 파라미터 변경 연동)
+ * [v3.3.20260310] 트레일링 체크 순서를 BB중앙 이전으로 이동 (config 파라미터 변경 연동)
  *   - TRAILING_ACTIVATE_PCT: 2% → 0.8% (실제 최대수익 구간인 0.8~1.2%에서 발동 가능)
  *   - TRAILING_OFFSET_PCT: 1.5% → 0.5% (수익 보존력 강화)
  *   - 순서 변경 이유: 기존에는 BB중앙 하향 체크가 먼저 실행되어, 트레일링이 활성화된
@@ -209,7 +209,7 @@ export const checkSellSignalC = (
     };
   }
 
-  // [3차 개선] 트레일링 스톱을 BB중앙 체크보다 먼저 실행
+  // [v3.3.20260310] 트레일링 스톱을 BB중앙 체크보다 먼저 실행
   // trailingActivated는 index.ts에서 maxNetPct >= STRATEGY_C_TRAILING_ACTIVATE_PCT(0.8%) 시 설정
   if (position.trailingActivated && position.highestPrice != null) {
     const threshold =
