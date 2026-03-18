@@ -32,6 +32,8 @@ import {
   DAILY_LOSS_BUFFER_PCT,
   STRATEGY_B_TRAILING_ACTIVATE_PCT,
   STRATEGY_B_LOSS_COOLDOWN_MS,
+  STRATEGY_B_LOSS_COOLDOWN_2ND_MS,
+  STRATEGY_B_MAX_DAILY_LOSS_COUNT,
   STRATEGY_C_TRAILING_ACTIVATE_PCT,
   STRATEGY_C_LOSS_COOLDOWN_MS,
   STRATEGY_D_LOSS_COOLDOWN_MS,
@@ -79,8 +81,19 @@ const lastPrices: Record<string, number> = {};
  * [v3.6.20260317] 전략 B 손실 종목 쿨다운 (종목별 마지막 손실 거래 시각)
  * 손절 후 10분간 동일 종목 B 재진입 차단. 급락 중 골든크로스 연속 루프 방지.
  * 수집: "[쿨다운] 전략B 손실 종목 등록" 로그 빈도로 차단 효과 확인.
+ *
+ * [v3.7.20260318] strategyBLossCount와 연동해 단계별 쿨다운 시간 적용.
+ *   1회: STRATEGY_B_LOSS_COOLDOWN_MS(10분)  ← 기존 동일
+ *   2회: STRATEGY_B_LOSS_COOLDOWN_2ND_MS(60분)
+ *   3회+: 당일 진입 금지 (strategyBLossCount >= STRATEGY_B_MAX_DAILY_LOSS_COUNT)
  */
 const strategyBLossCooldown: Record<string, number> = {};
+/**
+ * [v3.7.20260318] 전략 B 당일 종목별 누적 손절 횟수
+ * 일일 카운터 초기화(09:00 KST) 시 strategyBLossCooldown과 함께 초기화.
+ * 수집: 카운트가 2 이상인 종목이 재선정되는 빈도 확인 → UPWARD_WEIGHT와 조합 효과 검증.
+ */
+const strategyBLossCount: Record<string, number> = {};
 /** [v3.5.20260315] 전략 C 손실 종목 쿨다운 (종목별 마지막 손실 거래 시각) */
 const strategyCLossCooldown: Record<string, number> = {};
 /** 전략 C 쿨다운 차단 로그 쓰로틀 (종목별 마지막 로그 시각) */
@@ -143,6 +156,10 @@ const resetDailyLossIfNewDay = (): void => {
     dailyProfitKrw = 0;
     dailyLimitLogged = false;
     lastResetDate = today;
+    // [v3.7.20260318] 전략 B 당일 손절 카운터 및 쿨다운 초기화
+    // 새 날짜 시작 시 전일 손절 횟수·쿨다운 모두 리셋 → 종목에 대해 당일 제한 없이 재시작.
+    for (const k of Object.keys(strategyBLossCount)) delete strategyBLossCount[k];
+    for (const k of Object.keys(strategyBLossCooldown)) delete strategyBLossCooldown[k];
     logger.info(LOG_SOURCE, "일일 카운터 초기화 (새 날짜: %s)", today);
   }
 };
@@ -460,15 +477,28 @@ const run = async (): Promise<void> => {
               strategyCumulativeKrw[strategyTag] =
                 (strategyCumulativeKrw[strategyTag] ?? 0) + tradeProfitKrw;
 
-              // [v3.6.20260317] 전략 B 손실 종목 쿨다운 등록 — 손절 후 10분 재진입 차단
-              // 이유: 급락 중 골든크로스 연속 발생 → 손절 직후 즉시 재매수 루프 방지
+              // [v3.6.20260317] 전략 B 손실 종목 쿨다운 등록
+              // [v3.7.20260318] 손절 횟수 누적 카운트 추가 → 단계별 쿨다운 적용
+              //   1회: 10분, 2회: 60분, 3회+: 당일 진입 금지 (일일 카운터 리셋까지)
               if (strategyTag === "B" && finalNetPct < 0) {
                 strategyBLossCooldown[position.market] = Date.now();
+                strategyBLossCount[position.market] =
+                  (strategyBLossCount[position.market] ?? 0) + 1;
+                const bCount = strategyBLossCount[position.market]!;
+                const isDailyBlocked =
+                  bCount >= STRATEGY_B_MAX_DAILY_LOSS_COUNT;
+                const nextCooldownMin = isDailyBlocked
+                  ? "당일 진입 금지"
+                  : bCount >= 2
+                    ? `${STRATEGY_B_LOSS_COOLDOWN_2ND_MS / 60_000}분`
+                    : `${STRATEGY_B_LOSS_COOLDOWN_MS / 60_000}분`;
                 logger.info(
                   LOG_SOURCE,
-                  "[쿨다운] 전략B 손실 종목 등록: %s (순수익 %s%%)",
+                  "[쿨다운] 전략B 손실 종목 등록: %s (순수익 %s%%, 누적 %s회 → 다음쿨다운 %s)",
                   position.market,
                   finalNetPct.toFixed(2),
+                  String(bCount),
+                  nextCooldownMin,
                 );
               }
               // [v3.5.20260315] 전략 C 손실 종목 쿨다운 등록 — 손실 매도 후 30분 재진입 차단
@@ -684,6 +714,41 @@ const run = async (): Promise<void> => {
       if (regimeBlockBearTrendActive) {
         regimeBlockBearTrendActive = false;
         logger.debug(LOG_SOURCE, "[레짐 차단] BTC MA 하락 추세 해제 (종료)");
+        // [v3.7.20260318] 레짐 해제 시 즉시 종목 재선정
+        //
+        // [수정 이유]
+        //   기존: bearTrend 해제 후 차단 직전 구독 종목을 그대로 유지.
+        //   문제: 레짐 차단 기간(수 시간) 동안 기존 종목이 추가 하락해 있어도,
+        //         해제 직후 해당 종목에서 기술적 신호(골든크로스 등)가 나오면 즉시 진입.
+        //         (2026-03-17 08:41 해제 → 08:51 EDGE 진입 → 09:00 손절 -1.55%:
+        //          차단 중 EDGE가 추가 하락했으나 재선정 없이 그대로 진입)
+        //
+        // [목적]
+        //   현재 시점 기준으로 종목 상태를 재평가해 레짐 해제 직후 손절 방지.
+        //   재선정 후 return → 현재 틱의 market(구 종목)에서는 매수 시도 안 함.
+        //   다음 틱부터 새 종목 기준으로 정상 처리.
+        //
+        // [앞으로 확인할 것]
+        //   - 레짐 해제 직후 새로 선정된 종목이 구 종목보다 성과가 좋은지 사후 확인.
+        //   - selectAndLoad 실패 시 기존 종목 유지 (failsafe: 변경 없음).
+        {
+          const nextMarkets = await selectAndLoad();
+          if (nextMarkets.length > 0) {
+            currentMarkets = nextMarkets;
+            lastSelectTime = Date.now();
+            subscribeTicker(
+              currentMarkets,
+              handleTicker,
+              "레짐해제 종목 재선정(재연결)",
+            );
+            logger.info(
+              LOG_SOURCE,
+              "[레짐 해제] 종목 재선정 완료: %s",
+              currentMarkets.join(", "),
+            );
+          }
+        }
+        return; // 재선정 완료 — 현재 틱 이벤트 종료, 다음 틱부터 새 종목으로 처리
       }
 
       // ── 전략별 매수 신호 검사 ──────────────────────────────────────
@@ -696,22 +761,36 @@ const run = async (): Promise<void> => {
       //   - 성과가 좋은 전략만 남기고 나머지는 false로 전환
       //   - false로 바꿔도 이미 진입한 포지션의 매도 로직에는 영향 없음
       //   - 전략 우선순위(B가 1순위)가 현재 매매 패턴에 적합한지 주기적 재검토
-      // [v3.6.20260317] 전략 B 쿨다운 체크 — 손실 매도 후 10분 재진입 차단
-      // C/D와 동일 패턴. 만료 시 맵에서 제거 후 "[BT] B 쿨다운 만료" 로그로 효과 검증.
+      // [v3.6.20260317] 전략 B 쿨다운 체크 — 손실 매도 후 재진입 차단
+      // [v3.7.20260318] 단계별 쿨다운: 1회(10분) → 2회(60분) → 3회+(당일 금지)
+      // 만료 시 "[BT] B 쿨다운 만료" 로그에 횟수 포함 → 어느 단계 쿨다운이 만료됐는지 추적.
       let buyB = null;
       if (STRATEGY_B_ENABLED) {
         const bCooldownTime = strategyBLossCooldown[market];
-        if (
-          bCooldownTime &&
-          Date.now() - bCooldownTime < STRATEGY_B_LOSS_COOLDOWN_MS
-        ) {
-          // 쿨다운 중 — 진입 차단 (만료 시 아래에서 로그)
+        const bLossCount = strategyBLossCount[market] ?? 0;
+        // 당일 진입 금지 체크 (3회 이상 손절)
+        const isBDailyBlocked =
+          bLossCount >= STRATEGY_B_MAX_DAILY_LOSS_COUNT;
+        // 단계별 쿨다운 시간: 1회=10분, 2회=60분 (3회+는 위 당일금지로 처리)
+        const bCooldownMs =
+          bLossCount >= 2
+            ? STRATEGY_B_LOSS_COOLDOWN_2ND_MS
+            : STRATEGY_B_LOSS_COOLDOWN_MS;
+        const isBCooldownActive =
+          !isBDailyBlocked &&
+          !!bCooldownTime &&
+          Date.now() - bCooldownTime < bCooldownMs;
+
+        if (isBDailyBlocked || isBCooldownActive) {
+          // 차단 중 — 진입 스킵 (만료 시 아래 else에서 로그)
         } else {
           if (bCooldownTime) {
             logger.info(
               LOG_SOURCE,
-              "[BT] B 쿨다운 만료 재진입 허용: %s",
+              "[BT] B 쿨다운 만료 재진입 허용: %s (누적손절 %s회, %s분 경과)",
               market,
+              String(bLossCount),
+              Math.floor((Date.now() - bCooldownTime) / 60_000).toFixed(0),
             );
             delete strategyBLossCooldown[market];
           }

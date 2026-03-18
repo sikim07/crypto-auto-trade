@@ -1,5 +1,10 @@
 import { getAllMarkets, getTicker } from "../api/rest";
-import { TARGET_MARKET_COUNT, SELECT_MIN_PRICE } from "../config";
+import {
+  TARGET_MARKET_COUNT,
+  SELECT_MIN_PRICE,
+  SELECT_UPWARD_WEIGHT,
+  SELECT_DOWNWARD_WEIGHT,
+} from "../config";
 import { logger } from "../logger";
 
 const LOG_SOURCE = "selectMarkets";
@@ -36,13 +41,19 @@ export const selectTopMarkets = async (): Promise<string[]> => {
     .slice(0, topCount)
     .filter((t) => (t.trade_price ?? 0) >= SELECT_MIN_PRICE);
 
+  // [v3.7.20260318] 방향성 가중 변동성: 상승 × UPWARD_WEIGHT / 하락 × DOWNWARD_WEIGHT
+  // 기존 절대값 정렬은 -15% 하락 종목과 +15% 상승 종목을 동일 취급 → 하락 종목 반복 선정 문제.
+  // score로 정렬해 상승 종목 우선 선정. 실제 rate는 로그에 그대로 표시(가중 점수 미표시).
   const byVolatility = top
-    .map((t) => ({
-      market: t.market,
-      absRate: Math.abs(t.signed_change_rate ?? 0),
-      rate: t.signed_change_rate ?? 0,
-    }))
-    .sort((a, b) => b.absRate - a.absRate);
+    .map((t) => {
+      const rate = t.signed_change_rate ?? 0;
+      const score =
+        rate >= 0
+          ? rate * SELECT_UPWARD_WEIGHT
+          : Math.abs(rate) * SELECT_DOWNWARD_WEIGHT;
+      return { market: t.market, score, rate };
+    })
+    .sort((a, b) => b.score - a.score);
 
   const selected = byVolatility.slice(0, TARGET_MARKET_COUNT);
   logger.info(
@@ -52,6 +63,24 @@ export const selectTopMarkets = async (): Promise<string[]> => {
     String(TARGET_MARKET_COUNT),
     selected
       .map((x) => `${x.market}(${(x.rate * 100).toFixed(2)}%)`)
+      .join(", "),
+  );
+  // [BT] 방향가중 상위 후보 — 선정 종목 + 탈락 상위 2개를 함께 출력해 가중치 효과 추적.
+  // 가중점수(선정 기준)와 실제등락률을 모두 표시.
+  // 수집 목적: 기존 절대값 정렬이었다면 다르게 선정됐을 종목이 얼마나 있는지 확인.
+  //            UPWARD_WEIGHT/DOWNWARD_WEIGHT 조정 판단 근거로 활용.
+  const btCandidates = byVolatility.slice(
+    0,
+    Math.min(TARGET_MARKET_COUNT + 2, byVolatility.length),
+  );
+  logger.info(
+    LOG_SOURCE,
+    "[BT] 방향가중 후보: %s",
+    btCandidates
+      .map(
+        (x) =>
+          `${x.market}(점수${(x.score * 100).toFixed(1)}pt/${(x.rate * 100).toFixed(2)}%)`,
+      )
       .join(", "),
   );
 
