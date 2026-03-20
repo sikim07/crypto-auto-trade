@@ -10,6 +10,8 @@ import {
   STRATEGY_B_TRAILING_ACTIVATE_PCT,
   STRATEGY_B_TRAILING_OFFSET_PCT,
   STRATEGY_B_RSI_MAX,
+  STRATEGY_B_HIST_MIN_PCT,
+  STRATEGY_B_DEAD_CROSS_GRACE_MIN,
   RSI_TAKE_PROFIT_MIN_PCT,
 } from "../config";
 import type { BuySignalResult, SellSignalResult } from "./signal";
@@ -173,6 +175,9 @@ export const checkBuySignalB = (
     // 매수 신호 발동 시에만 찍히므로 로그 빈도 증가 없음.
     // 수집 후 손익 결과와 대조해 손실 케이스의 histPct 상한을 임계값으로 설정.
     const histPct = (macd5m.histogram / currentPrice) * 100;
+    // [v3.8.20260320] MACD hist 최솟값 필터: histPct < STRATEGY_B_HIST_MIN_PCT 이면 노이즈 모멘텀으로 판단해 차단
+    // 데이터 축적 후 손실 케이스 histPct 상한을 임계값으로 정밀화 예정
+    if (histPct < STRATEGY_B_HIST_MIN_PCT) return null;
     logger.info(
       LOG_SOURCE,
       "[BT] B 매수 MACD_hist=%s histPct=%s%% RSI=%s thr=%s div=%s price=%s",
@@ -314,8 +319,13 @@ export const checkSellSignalB = (
      * [재검토 시점]
      *   SELECT_MIN_PRICE=200 적용 후에도 200원 이상 종목에서 데드크로스 손절이
      *   반복된다면 대안 B(쿨인 기간)를 우선 검토.
+     *
+     * [v3.8.20260320] 대안 B 적용 — 진입 후 STRATEGY_B_DEAD_CROSS_GRACE_MIN(3분) 이내에는
+     *   데드크로스 손절 유예. 하드 손절(-1.5%)은 grace 기간 중에도 그대로 작동.
      */
-    if (deadCross && typeof rsiCur === "number" && rsiCur < RSI_50) {
+    // [v3.8.20260320] 쿨인 기간: holdMin이 이미 상단에서 계산됨
+    if (holdMin >= STRATEGY_B_DEAD_CROSS_GRACE_MIN &&
+        deadCross && typeof rsiCur === "number" && rsiCur < RSI_50) {
       logger.info(
         LOG_SOURCE,
         "[시그널] %s | 손절 (MACD 데드크로스 + RSI %s)",
@@ -324,9 +334,10 @@ export const checkSellSignalB = (
       );
       logger.info(
         LOG_SOURCE,
-        "[BT] B 매도 type=데드크로스 RSI=%s netPct=%s",
+        "[BT] B 매도 type=데드크로스 RSI=%s netPct=%s holdMin=%s",
         rsiCur.toFixed(1),
         netPct.toFixed(2),
+        holdMin.toFixed(1),
       );
       return {
         shouldSell: true,

@@ -4,6 +4,7 @@ import {
   SELECT_MIN_PRICE,
   SELECT_UPWARD_WEIGHT,
   SELECT_DOWNWARD_WEIGHT,
+  SELECT_MAX_DOWNWARD_RATE,
 } from "../config";
 import { logger } from "../logger";
 
@@ -37,9 +38,12 @@ export const selectTopMarkets = async (): Promise<string[]> => {
   // 기존 전략 D에서만 적용하던 저가 코인 차단을 종목 선정 단계로 이관해 전략 무관하게 일괄 적용.
   // 200원 미만 코인은 1원 틱이 수익률 0.5~1.7%에 해당하여 수수료 구조상 안정적 수익이 어려움.
   // (기준값·이관 근거 상세: config.ts SELECT_MIN_PRICE 주석 참조)
+  // [v3.8.20260320] 폭락 종목 절대 차단: 24h 등락률 -SELECT_MAX_DOWNWARD_RATE 이하 제외
+  // 방향가중만으로는 -43% 폭락 종목이 여전히 1위 선정되는 구조적 문제 해결 (BARD 3회 손절 사례)
   const top = byTradePrice
     .slice(0, topCount)
-    .filter((t) => (t.trade_price ?? 0) >= SELECT_MIN_PRICE);
+    .filter((t) => (t.trade_price ?? 0) >= SELECT_MIN_PRICE)
+    .filter((t) => (t.signed_change_rate ?? 0) > -SELECT_MAX_DOWNWARD_RATE);
 
   // [v3.7.20260318] 방향성 가중 변동성: 상승 × UPWARD_WEIGHT / 하락 × DOWNWARD_WEIGHT
   // 기존 절대값 정렬은 -15% 하락 종목과 +15% 상승 종목을 동일 취급 → 하락 종목 반복 선정 문제.

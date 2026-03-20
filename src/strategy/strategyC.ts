@@ -16,6 +16,7 @@ import {
   STRATEGY_C_TRAILING_OFFSET_PCT,
   STRATEGY_C_STOP_LOSS_PCT,
   STRATEGY_C_MAX_HOLD_MINUTES,
+  STRATEGY_C_BB_GRACE_MIN,
   COST_PCT,
 } from "../config";
 import type { BuySignalResult, SellSignalResult } from "./signal";
@@ -236,6 +237,11 @@ export const checkSellSignalC = (
     }
   }
 
+  // [v3.8.20260320] BB 중앙 손절 grace period: 진입 후 STRATEGY_C_BB_GRACE_MIN분 이내 유예
+  // BB 상단 돌파 직후 정상적인 pull-back은 3분 이내에 회복되는 것이 일반적.
+  // "824 < 중앙 824" 같은 반올림 오차 수준의 즉시 손절 방지. 하드 손절(-1.5%)은 그대로 작동.
+  if (holdMin < STRATEGY_C_BB_GRACE_MIN) return { shouldSell: false };
+
   // BB중앙 하향: 트레일링 미발동(수익 0.8% 미만) 구간에서의 안전장치
   const candles1m = getCandles(market, 1);
   const volumes1m = volumesFromCandles(candles1m);
@@ -257,10 +263,11 @@ export const checkSellSignalC = (
       );
       logger.info(
         LOG_SOURCE,
-        "[BT] C 매도 type=BB중앙하향 price=%s bbMiddle=%s netPct=%s",
+        "[BT] C 매도 type=BB중앙하향 price=%s bbMiddle=%s netPct=%s holdMin=%s",
         currentPrice.toFixed(0),
         bb.middle.toFixed(0),
         netPct.toFixed(2),
+        holdMin.toFixed(1),
       );
       return {
         shouldSell: true,
