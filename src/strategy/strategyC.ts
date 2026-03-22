@@ -17,6 +17,7 @@ import {
   STRATEGY_C_STOP_LOSS_PCT,
   STRATEGY_C_MAX_HOLD_MINUTES,
   STRATEGY_C_BB_GRACE_MIN,
+  STRATEGY_C_BB_MIDDLE_BUFFER,
   COST_PCT,
 } from "../config";
 import type { BuySignalResult, SellSignalResult } from "./signal";
@@ -25,6 +26,8 @@ import { logger } from "../logger";
 import { logVolumeSkipTransition } from "./volumeSkipState";
 
 const LOG_SOURCE = "strategyC";
+/** BB 중앙 버퍼 유예 상태 (마켓별) — 전환 시점에만 로그 */
+const bbMiddleBufferSaveState = new Map<string, boolean>();
 const pricesFromCandles = (candles: { trade_price: number }[]): number[] =>
   candles.map((c) => c.trade_price);
 const volumesFromCandles = (
@@ -250,30 +253,60 @@ export const checkSellSignalC = (
   const closedCandles = isCurrentCandleOpen
     ? candles1m.slice(0, -1)
     : candles1m;
+  // [v3.9.20260322] BB 중앙 손절 버퍼: 중앙선 대비 STRATEGY_C_BB_MIDDLE_BUFFER(0.1%) 이상 하락해야 발동.
+  // grace period(3분)와 조합해 2중 보호: 초기 조정 유예 + 미세 오차 손절 방지.
   if (closedCandles.length >= BB_PERIOD) {
     const closedPrices = closedCandles.map((c) => c.trade_price);
     const bb = calculateBollingerBands(closedPrices.slice(-BB_PERIOD));
-    if (currentPrice < bb.middle) {
+    const bbMiddleThreshold = bb.middle * (1 - STRATEGY_C_BB_MIDDLE_BUFFER);
+    if (currentPrice < bbMiddleThreshold) {
+      bbMiddleBufferSaveState.set(market, false);
       logger.info(
         LOG_SOURCE,
-        "[시그널] %s | 손절 (BB 중앙 하향, 마감봉 기준) | 현재가 %s < 중앙 %s",
+        "[시그널] %s | 손절 (BB 중앙 하향, 마감봉 기준) | 현재가 %s < 기준 %s (중앙 %s)",
         market,
         currentPrice.toFixed(0),
+        bbMiddleThreshold.toFixed(0),
         bb.middle.toFixed(0),
       );
       logger.info(
         LOG_SOURCE,
-        "[BT] C 매도 type=BB중앙하향 price=%s bbMiddle=%s netPct=%s holdMin=%s",
+        "[BT] C 매도 type=BB중앙하향 price=%s bbMiddle=%s thr=%s netPct=%s holdMin=%s",
         currentPrice.toFixed(0),
         bb.middle.toFixed(0),
+        bbMiddleThreshold.toFixed(0),
         netPct.toFixed(2),
         holdMin.toFixed(1),
       );
       return {
         shouldSell: true,
-        reason: `전략C 손절 (가격 ${currentPrice.toFixed(0)} < BB중앙 ${bb.middle.toFixed(0)})`,
+        reason: `전략C 손절 (가격 ${currentPrice.toFixed(0)} < BB중앙버퍼 ${bbMiddleThreshold.toFixed(0)})`,
       };
     }
+    // [v3.9.20260322] 버퍼 유예 상태 전환 로그 (price < middle 이지만 버퍼 이내 — 손절 유예 중)
+    const inBufferZone = currentPrice < bb.middle;
+    const wasInBufferZone = bbMiddleBufferSaveState.get(market) ?? false;
+    if (inBufferZone && !wasInBufferZone) {
+      logger.info(
+        LOG_SOURCE,
+        "[BT] C BB버퍼 유예 — 시작 price=%s bbMiddle=%s thr=%s netPct=%s holdMin=%s",
+        currentPrice.toFixed(0),
+        bb.middle.toFixed(0),
+        bbMiddleThreshold.toFixed(0),
+        netPct.toFixed(2),
+        holdMin.toFixed(1),
+      );
+    } else if (!inBufferZone && wasInBufferZone) {
+      logger.info(
+        LOG_SOURCE,
+        "[BT] C BB버퍼 유예 — 끝 (회복) price=%s bbMiddle=%s netPct=%s holdMin=%s",
+        currentPrice.toFixed(0),
+        bb.middle.toFixed(0),
+        netPct.toFixed(2),
+        holdMin.toFixed(1),
+      );
+    }
+    bbMiddleBufferSaveState.set(market, inBufferZone);
   }
 
   return { shouldSell: false };
