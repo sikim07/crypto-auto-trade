@@ -755,7 +755,7 @@ const run = async (): Promise<void> => {
       // [수정 이유] 6개 전략이 동시 운용되며 같은 종목에 중복 진입하는 문제.
       //   (KAVA에 전략 D·F 동일 종목 동일 날 4회 진입 등)
       //   각 전략에 ENABLED 플래그를 추가해 코드 수정 없이 즉시 비활성화 가능.
-      // [우선순위] F → B → A → C → D → E 순으로 하나만 진입.
+      // [우선순위] F → A → B → C → D → E 순으로 하나만 진입.
       //   앞 전략이 신호를 내면 뒤 전략은 체크 생략 (단기 스캘핑에서 중복 포지션 방지).
       // [앞으로 확인할 것]
       //   - 성과가 좋은 전략만 남기고 나머지는 false로 전환
@@ -795,11 +795,16 @@ const run = async (): Promise<void> => {
         }
       }
 
+      const buyA =
+        buyF?.shouldBuy || !STRATEGY_A_ENABLED
+          ? null
+          : checkBuySignalA(market, price);
+
       // [v3.6.20260317] 전략 B 쿨다운 체크 — 손실 매도 후 재진입 차단
       // [v3.7.20260318] 단계별 쿨다운: 1회(10분) → 2회(60분) → 3회+(당일 금지)
       // 만료 시 "[BT] B 쿨다운 만료" 로그에 횟수 포함 → 어느 단계 쿨다운이 만료됐는지 추적.
       let buyB = null;
-      if (STRATEGY_B_ENABLED && !buyF?.shouldBuy) {
+      if (STRATEGY_B_ENABLED && !(buyF?.shouldBuy || buyA?.shouldBuy)) {
         const bCooldownTime = strategyBLossCooldown[market];
         const bLossCount = strategyBLossCount[market] ?? 0;
         // 당일 진입 금지 체크 (3회 이상 손절)
@@ -831,16 +836,12 @@ const run = async (): Promise<void> => {
           buyB = checkBuySignalB(market, price);
         }
       }
-      const buyA =
-        buyF?.shouldBuy || buyB?.shouldBuy || !STRATEGY_A_ENABLED
-          ? null
-          : checkBuySignalA(market, price);
 
       // [v3.5.20260315] 전략 C 쿨다운 체크 — 손실 매도 후 30분 재진입 차단
       let buyC = null;
       if (
         STRATEGY_C_ENABLED &&
-        !(buyF?.shouldBuy || buyB?.shouldBuy || buyA?.shouldBuy)
+        !(buyF?.shouldBuy || buyA?.shouldBuy || buyB?.shouldBuy)
       ) {
         const cCooldownTime = strategyCLossCooldown[market];
         if (
@@ -866,7 +867,7 @@ const run = async (): Promise<void> => {
       let buyD = null;
       if (
         STRATEGY_D_ENABLED &&
-        !(buyF?.shouldBuy || buyB?.shouldBuy || buyA?.shouldBuy || buyC?.shouldBuy)
+        !(buyF?.shouldBuy || buyA?.shouldBuy || buyB?.shouldBuy || buyC?.shouldBuy)
       ) {
         const cooldownTime = lossCooldown[market];
         if (
@@ -884,15 +885,15 @@ const run = async (): Promise<void> => {
       }
       const buyE =
         buyF?.shouldBuy ||
-        buyB?.shouldBuy ||
         buyA?.shouldBuy ||
+        buyB?.shouldBuy ||
         buyC?.shouldBuy ||
         buyD?.shouldBuy ||
         !STRATEGY_E_ENABLED
           ? null
           : checkBuySignalE(market, price);
 
-      const buySignal = buyF ?? buyB ?? buyA ?? buyC ?? buyD ?? buyE;
+      const buySignal = buyF ?? buyA ?? buyB ?? buyC ?? buyD ?? buyE;
       if (!buySignal?.shouldBuy) return;
       isBuying = true;
       const strategy = buySignal.strategy ?? undefined;
