@@ -755,17 +755,51 @@ const run = async (): Promise<void> => {
       // [수정 이유] 6개 전략이 동시 운용되며 같은 종목에 중복 진입하는 문제.
       //   (KAVA에 전략 D·F 동일 종목 동일 날 4회 진입 등)
       //   각 전략에 ENABLED 플래그를 추가해 코드 수정 없이 즉시 비활성화 가능.
-      // [우선순위] B → A → C → D → E → F 순으로 하나만 진입.
+      // [우선순위] F → B → A → C → D → E 순으로 하나만 진입.
       //   앞 전략이 신호를 내면 뒤 전략은 체크 생략 (단기 스캘핑에서 중복 포지션 방지).
       // [앞으로 확인할 것]
       //   - 성과가 좋은 전략만 남기고 나머지는 false로 전환
       //   - false로 바꿔도 이미 진입한 포지션의 매도 로직에는 영향 없음
-      //   - 전략 우선순위(B가 1순위)가 현재 매매 패턴에 적합한지 주기적 재검토
+      //   - 전략 우선순위 변경 이유(v3.8): F가 로그상 유일하게 꾸준히 양수 수익을 기록.
+      //     F를 1순위로 올려 B/C/D 신호와 겹칠 때 F가 우선 진입하도록 변경.
+      //     추후 백데이터로 F 자체 우위인지, B/C/D 타이밍을 뒤집어쓴 효과인지 검증 필요.
+
+      // 전략 F 쿨다운 체크 후 F 매수 신호 검사 (1순위)
+      // [2차 수정] 이중 쿨다운 체크
+      // - winCooldown: 수익/손실 무관 5분 (빠른 재진입 허용)
+      // - lossCooldown: 손실 후 15분 (반복 손실 방지)
+      // 손실 매도 시 두 쿨다운이 모두 등록되므로 15분이 사실상 우선 적용됨
+      let buyF: ReturnType<typeof checkBuySignalF> = null;
+      if (STRATEGY_F_ENABLED) {
+        const fWinCooldownTime = strategyFCooldown[market];
+        const fLossCooldownTime = strategyFLossCooldown[market];
+        const winBlocked =
+          !!fWinCooldownTime &&
+          Date.now() - fWinCooldownTime < STRATEGY_F_COOLDOWN_MS;
+        const lossBlocked =
+          !!fLossCooldownTime &&
+          Date.now() - fLossCooldownTime < STRATEGY_F_LOSS_COOLDOWN_MS;
+
+        if (winBlocked || lossBlocked) {
+          // 쿨다운 중 — 진입 차단 (만료 시 아래 else에서 로그)
+        } else {
+          // 만료된 쿨다운 맵에서 정리
+          if (fWinCooldownTime) {
+            delete strategyFCooldown[market];
+            delete strategyFCooldownLastLog[market];
+          }
+          if (fLossCooldownTime) {
+            delete strategyFLossCooldown[market];
+          }
+          buyF = checkBuySignalF(market, price);
+        }
+      }
+
       // [v3.6.20260317] 전략 B 쿨다운 체크 — 손실 매도 후 재진입 차단
       // [v3.7.20260318] 단계별 쿨다운: 1회(10분) → 2회(60분) → 3회+(당일 금지)
       // 만료 시 "[BT] B 쿨다운 만료" 로그에 횟수 포함 → 어느 단계 쿨다운이 만료됐는지 추적.
       let buyB = null;
-      if (STRATEGY_B_ENABLED) {
+      if (STRATEGY_B_ENABLED && !buyF?.shouldBuy) {
         const bCooldownTime = strategyBLossCooldown[market];
         const bLossCount = strategyBLossCount[market] ?? 0;
         // 당일 진입 금지 체크 (3회 이상 손절)
@@ -798,13 +832,16 @@ const run = async (): Promise<void> => {
         }
       }
       const buyA =
-        buyB?.shouldBuy || !STRATEGY_A_ENABLED
+        buyF?.shouldBuy || buyB?.shouldBuy || !STRATEGY_A_ENABLED
           ? null
           : checkBuySignalA(market, price);
 
       // [v3.5.20260315] 전략 C 쿨다운 체크 — 손실 매도 후 30분 재진입 차단
       let buyC = null;
-      if (STRATEGY_C_ENABLED && !(buyB?.shouldBuy || buyA?.shouldBuy)) {
+      if (
+        STRATEGY_C_ENABLED &&
+        !(buyF?.shouldBuy || buyB?.shouldBuy || buyA?.shouldBuy)
+      ) {
         const cCooldownTime = strategyCLossCooldown[market];
         if (
           cCooldownTime &&
@@ -829,7 +866,7 @@ const run = async (): Promise<void> => {
       let buyD = null;
       if (
         STRATEGY_D_ENABLED &&
-        !(buyB?.shouldBuy || buyA?.shouldBuy || buyC?.shouldBuy)
+        !(buyF?.shouldBuy || buyB?.shouldBuy || buyA?.shouldBuy || buyC?.shouldBuy)
       ) {
         const cooldownTime = lossCooldown[market];
         if (
@@ -846,6 +883,7 @@ const run = async (): Promise<void> => {
         }
       }
       const buyE =
+        buyF?.shouldBuy ||
         buyB?.shouldBuy ||
         buyA?.shouldBuy ||
         buyC?.shouldBuy ||
@@ -853,44 +891,8 @@ const run = async (): Promise<void> => {
         !STRATEGY_E_ENABLED
           ? null
           : checkBuySignalE(market, price);
-      // 전략 F 쿨다운 체크 후 F 매수 신호 검사
-      let buyF: ReturnType<typeof checkBuySignalF> = null;
-      if (
-        STRATEGY_F_ENABLED &&
-        !buyB?.shouldBuy &&
-        !buyA?.shouldBuy &&
-        !buyC?.shouldBuy &&
-        !buyD?.shouldBuy &&
-        !buyE?.shouldBuy
-      ) {
-        // [2차 수정] 이중 쿨다운 체크
-        // - winCooldown: 수익/손실 무관 5분 (빠른 재진입 허용)
-        // - lossCooldown: 손실 후 15분 (반복 손실 방지)
-        // 손실 매도 시 두 쿨다운이 모두 등록되므로 15분이 사실상 우선 적용됨
-        const fWinCooldownTime = strategyFCooldown[market];
-        const fLossCooldownTime = strategyFLossCooldown[market];
-        const winBlocked =
-          !!fWinCooldownTime &&
-          Date.now() - fWinCooldownTime < STRATEGY_F_COOLDOWN_MS;
-        const lossBlocked =
-          !!fLossCooldownTime &&
-          Date.now() - fLossCooldownTime < STRATEGY_F_LOSS_COOLDOWN_MS;
 
-        if (winBlocked || lossBlocked) {
-          // 쿨다운 중 — 진입 차단 (만료 시 아래 else에서 로그)
-        } else {
-          // 만료된 쿨다운 맵에서 정리
-          if (fWinCooldownTime) {
-            delete strategyFCooldown[market];
-            delete strategyFCooldownLastLog[market];
-          }
-          if (fLossCooldownTime) {
-            delete strategyFLossCooldown[market];
-          }
-          buyF = checkBuySignalF(market, price);
-        }
-      }
-      const buySignal = buyB ?? buyA ?? buyC ?? buyD ?? buyE ?? buyF;
+      const buySignal = buyF ?? buyB ?? buyA ?? buyC ?? buyD ?? buyE;
       if (!buySignal?.shouldBuy) return;
       isBuying = true;
       const strategy = buySignal.strategy ?? undefined;
