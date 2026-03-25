@@ -28,6 +28,9 @@ import {
   STRATEGY_F_EMA_TOUCH_BUFFER_PCT,
   STRATEGY_F_EMA_SLOPE_LOOKBACK,
   STRATEGY_F_EMA_SLOPE_MIN_PCT,
+  STRATEGY_F_VWAP_EMA_GAP_MAX_PCT,
+  STRATEGY_F_EMA_BREAK_BUFFER_PCT,
+  STRATEGY_F_EMA_BREAK_GRACE_MIN,
   COST_PCT,
 } from "../config";
 import type { BuySignalResult, SellSignalResult } from "./signal";
@@ -35,6 +38,8 @@ import type { BotPosition, UpbitCandle } from "../types";
 import { logger } from "../logger";
 
 const LOG_SOURCE = "strategyF";
+/** EMA21 이탈 버퍼 유예 상태 (마켓별) — 전환 시점에만 로그 */
+const emaBreakSaveState = new Map<string, boolean>();
 
 const KST_OFFSET_MS = 9 * 60 * 60 * 1000;
 
@@ -143,6 +148,23 @@ export const checkBuySignalF = (
 
     const ema21 = calculateEMA(closedPrices, STRATEGY_F_EMA_PERIOD);
     if (currentPrice <= ema21) return null;
+
+    // [v3.10.20260325] [조건 9] VWAP1m-EMA21 최대 괴리 제한
+    // VWAP1m이 EMA21보다 VWAP_EMA_GAP_MAX_PCT 이상 낮으면 진입 차단.
+    // 이 경우 VWAP 붕괴 손절이 실질적으로 너무 낮아 보호 역할을 못하며,
+    // 당일 거래 무게중심에서 이탈한 고점 진입이 됨.
+    const vwapEmaGapPct = ((ema21 - vwap1m) / ema21) * 100;
+    if (vwapEmaGapPct > STRATEGY_F_VWAP_EMA_GAP_MAX_PCT) {
+      logger.info(
+        LOG_SOURCE,
+        "[BT] F 매수 스킵 VWAP괴리 vwapEmaGap=%s%% thr=%s%% vwap1m=%s ema21=%s",
+        vwapEmaGapPct.toFixed(2),
+        String(STRATEGY_F_VWAP_EMA_GAP_MAX_PCT),
+        vwap1m.toFixed(0),
+        ema21.toFixed(0),
+      );
+      return null;
+    }
 
     // [조건 3] 현재가 ≤ max(VWAP_1m, EMA21) × (1 + PROXIMITY_PCT/100) — 눌림목 위치
     const anchor = Math.max(vwap1m, ema21);
@@ -394,7 +416,79 @@ export const checkSellSignalF = (
       }
     }
 
-    // 4. 트레일링 스톱 (D 방식 — maxNetPct 기반, index.ts에서 공통 갱신)
+    // [v3.10.20260325] 4. EMA21 이탈 손절 (grace period 경과 후, 마감봉 기준)
+    // 진입 조건 2에서 "현재가 > EMA21"로 진입했으므로 마감봉 종가가 EMA21 아래로
+    // 내려가면 진입 전제 붕괴. VWAP 붕괴 손절은 VWAP가 EMA21보다 크게 낮은 날
+    // 실질 보호가 없어 이 체크로 보완.
+    if (holdMs >= STRATEGY_F_EMA_BREAK_GRACE_MIN * 60_000) {
+      const emaCandles1m = getCandles(market, 1);
+      if (emaCandles1m.length >= STRATEGY_F_EMA_PERIOD) {
+        const emaVolumes = volumesFromCandles(emaCandles1m);
+        const isEmaOpen =
+          emaVolumes.length > 1 && emaVolumes[emaVolumes.length - 1] === 0;
+        const emaClosed = isEmaOpen ? emaCandles1m.slice(0, -1) : emaCandles1m;
+        if (emaClosed.length >= STRATEGY_F_EMA_PERIOD) {
+          const emaPrices = pricesFromCandles(emaClosed);
+          const ema21Sell = calculateEMA(emaPrices, STRATEGY_F_EMA_PERIOD);
+          const emaBreachThr =
+            ema21Sell * (1 - STRATEGY_F_EMA_BREAK_BUFFER_PCT);
+          const lastClose = emaClosed[emaClosed.length - 1].trade_price;
+          const holdMinEma = holdMs / 60_000;
+
+          if (lastClose < emaBreachThr) {
+            emaBreakSaveState.set(market, false);
+            logger.info(
+              LOG_SOURCE,
+              "[시그널] %s | 손절 (EMA21 이탈) 마감가 %s < 기준 %s (EMA21 %s)",
+              market,
+              lastClose.toFixed(0),
+              emaBreachThr.toFixed(0),
+              ema21Sell.toFixed(0),
+            );
+            logger.info(
+              LOG_SOURCE,
+              "[BT] F 매도 type=EMA21이탈 close=%s ema21=%s thr=%s netPct=%s holdMin=%s",
+              lastClose.toFixed(0),
+              ema21Sell.toFixed(0),
+              emaBreachThr.toFixed(0),
+              netPct.toFixed(2),
+              holdMinEma.toFixed(1),
+            );
+            return {
+              shouldSell: true,
+              reason: `전략F 손절 (EMA21 이탈 마감가 ${lastClose.toFixed(0)} < 기준 ${emaBreachThr.toFixed(0)})`,
+            };
+          }
+
+          // 버퍼 유예 전환 로그 (close < ema21 이지만 버퍼 이내 — 손절 유예 중)
+          const inBufferZone = lastClose < ema21Sell;
+          const wasInBufferZone = emaBreakSaveState.get(market) ?? false;
+          if (inBufferZone && !wasInBufferZone) {
+            logger.info(
+              LOG_SOURCE,
+              "[BT] F EMA이탈 유예 — 시작 close=%s ema21=%s thr=%s netPct=%s holdMin=%s",
+              lastClose.toFixed(0),
+              ema21Sell.toFixed(0),
+              emaBreachThr.toFixed(0),
+              netPct.toFixed(2),
+              holdMinEma.toFixed(1),
+            );
+          } else if (!inBufferZone && wasInBufferZone) {
+            logger.info(
+              LOG_SOURCE,
+              "[BT] F EMA이탈 유예 — 끝 (회복) close=%s ema21=%s netPct=%s holdMin=%s",
+              lastClose.toFixed(0),
+              ema21Sell.toFixed(0),
+              netPct.toFixed(2),
+              holdMinEma.toFixed(1),
+            );
+          }
+          emaBreakSaveState.set(market, inBufferZone);
+        }
+      }
+    }
+
+    // 5. 트레일링 스톱 (D 방식 — maxNetPct 기반, index.ts에서 공통 갱신)
     // [개선] 가변형 트레일링 스톱 도입
     // 목적: 높은 수익 구간에서 수익 보존 강화
     // 이유: 로그 분석 결과 최대 수익이 높을 때도 고정 오프셋으로 인해 수익이 많이 줄어드는 문제 발생

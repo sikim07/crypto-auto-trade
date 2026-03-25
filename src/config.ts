@@ -615,6 +615,15 @@ export const STRATEGY_C_BB_MIDDLE_BUFFER = 0.001;
 export const STRATEGY_D_RSI_CROSS = 60;
 /** 직전 평균 대비 이 배수 초과일 때만 진입 (2 = 200%, 압도적 거래량 시에만) */
 export const STRATEGY_D_VOLUME_RATIO = 2;
+/**
+ * [v3.11.20260325] 전략 D 거래량 상한 — 이 배수 초과 시 급등 끝물 진입으로 판단해 매수하지 않음.
+ * 근거: volRatio=597.59 케이스(2026-03-25 05:21) — 비정상 급등 직후 진입 → MA20 이탈 손절.
+ * 정상 신호 volRatio 범위(2~5배) 대비 100배 이상은 급등 마감 시점으로 손익비 불리.
+ * 확인할 것:
+ *   - [BT] D 매수 로그의 volRatio 분포에서 손실 케이스 상한 확인 후 임계값 정밀화.
+ *   - 20배 차단이 과도해 유효 신호를 놓치면 30~50으로 완화 검토.
+ */
+export const STRATEGY_D_VOLUME_RATIO_MAX = 20;
 export const STRATEGY_D_VOLUME_AVG_PERIOD = 5;
 export const STRATEGY_D_DISPLACEMENT_MAX = 1.02;
 /** 전략 D 이격도 최소값 — MA20 대비 이 비율 이상이어야 진입 (노이즈 청산 허용 범위 확보) */
@@ -688,6 +697,16 @@ export const SELECT_MIN_PRICE = 200;
 export const STRATEGY_D_MAX_HOLD_MINUTES = 15;
 /** 전략 D 손실 종목 쿨다운(ms) — 손실 거래 후 이 시간 동안 재진입 차단 */
 export const STRATEGY_D_LOSS_COOLDOWN_MS = 30 * 60 * 1000;
+/**
+ * [v3.11.20260325] 전략 D 당일 종목별 손절 횟수 한도 — 이 횟수 이상이면 당일 재진입 금지 (일일 카운터 초기화까지).
+ * 근거: 2026-03-25 TAO 2회 연속 D 손절(-0.29%, -0.65%) — 동일 종목 반복 손절 구조적 차단.
+ * 전략 B의 STRATEGY_B_MAX_DAILY_LOSS_COUNT(3회)보다 낮게 설정: D는 추세 추종 전략으로
+ * 동일 종목 추세가 꺾인 당일에는 재진입 가치가 낮음.
+ * 확인할 것:
+ *   - "[쿨다운] 전략D 손실 종목 등록" 로그에서 당일 진입 금지 빈도 모니터링.
+ *   - 2회가 과도해 정상 반등 기회를 놓치면 3회로 완화 검토.
+ */
+export const STRATEGY_D_MAX_DAILY_LOSS_COUNT = 2;
 export const STRATEGY_D_MA_PERIODS = [5, 10, 20] as const;
 export const STRATEGY_D_STOP_LOSS_PCT = -1.5;
 /** MA5 하향 이탈 시 익절로 매도하려면 넘어야 할 최소 순수익률(%) — 수수료·슬리피지 안전 마진 */
@@ -812,6 +831,26 @@ export const STRATEGY_F_EMA_TOUCH_BUFFER_PCT = 0.2;
 export const STRATEGY_F_VWAP_BUFFER_PCT = 0.3;
 
 /**
+ * [v3.10.20260325] VWAP1m-EMA21 최대 괴리율 (%) — 이 값 초과 시 매수 차단
+ *
+ * [배경] 2026-03-25 04:39 TAO 진입 사례:
+ *        VWAP1m=477,483 / EMA21=490,454 → 괴리 2.67%.
+ *        VWAP 붕괴 손절 기준이 476,050원(현재가 대비 3.1% 하락)에 위치해
+ *        실질적 보호 없이 진입이탈(-0.7%)만이 유일한 방어막으로 작동.
+ *        당일 VWAP가 EMA21보다 크게 낮다 = 당일 거래 무게중심에서 크게 이탈한
+ *        고점에 진입하는 것. "VWAP 위 눌림목"이 아닌 "VWAP 위 고점" 진입.
+ * [목적] VWAP1m이 EMA21 대비 이 값 이상 낮으면 진입 차단.
+ *        VWAP가 근접 지지선 역할을 할 때만 진입해 VWAP 붕괴 손절을 실질화.
+ * [주요 값] 1.5%: 오늘 케이스(2.67%)는 명확 차단.
+ *           자연스러운 당일 VWAP 추적 범위(~1.5% 이내)는 허용.
+ * [앞으로 확인할 것]
+ *   - "[BT] F 매수 스킵 VWAP괴리" 빈도 → 장 시작 직후(VWAP 축적 부족) 집중 여부.
+ *   - 신호 과소(일 0~1건 미만) 시 1.8~2.0%로 완화 검토.
+ *   - 차단 케이스 중 실제로 진입했으면 손절이었을 비율 추적 (차단 유효성 검증).
+ */
+export const STRATEGY_F_VWAP_EMA_GAP_MAX_PCT = 1.5;
+
+/**
  * 거래량 필터 최소 비율 — 1분봉 현재 거래량이 직전 N개 봉 평균 대비 이 비율 이상일 때만 진입
  *
  * [신규 추가] (보수적 설정)
@@ -880,6 +919,36 @@ export const STRATEGY_F_TRAILING_TIGHTEN_OFFSET = 0.3;
 export const STRATEGY_F_EMA_SLOPE_LOOKBACK = 5;
 /** EMA21 봉당 최소 상승률 (%) — 이 값 미만이면 수평/하향으로 판단해 진입 차단 */
 export const STRATEGY_F_EMA_SLOPE_MIN_PCT = 0.01;
+
+/**
+ * [v3.10.20260325] EMA21 이탈 손절 버퍼 (%)
+ *
+ * [배경] 진입 조건 2에서 "현재가 > EMA21"을 확인하고 진입하지만, 보유 중 EMA21
+ *        아래로 마감봉이 내려갔을 때 기존 VWAP 붕괴 손절은 VWAP가 멀리 있는 날
+ *        이를 포착하지 못함. (2026-03-25 TAO 케이스: VWAP 붕괴선 476,050원으로
+ *        현재가 대비 3.1% 아래에 위치 → 진입이탈(-0.7%)만으로 -0.98% 청산)
+ * [목적] 마감봉 종가 < EMA21 × (1 - 버퍼) 이면 손절.
+ *        진입 전제(현재가 > EMA21)가 붕괴됐을 때 조기 청산. VWAP가 멀리 있는
+ *        날의 손절 공백을 보완.
+ * [주요 값] 0.001 (0.1%): 전략C BB중앙 버퍼와 동일. 반올림 오차 수준 오손절 방지.
+ * [앞으로 확인할 것]
+ *   - "[BT] F EMA이탈 유예 — 시작" 빈도 및 이후 회복 비율 추적.
+ *   - 회복 비율 50% 이상이면 버퍼 0.002로 상향 검토.
+ *   - EMA_BREAK_GRACE_MIN(3분) 이내 이탈 손절이 발생하면 grace 5분으로 연장 검토.
+ */
+export const STRATEGY_F_EMA_BREAK_BUFFER_PCT = 0.001;
+
+/**
+ * [v3.10.20260325] EMA21 이탈 손절 유예 시간 (분)
+ *
+ * [배경] 진입 시 EMA21 바로 위에서 진입하므로 초기 변동성으로 EMA21을 일시
+ *        하향했다가 복귀하는 케이스가 일반적. 즉시 적용 시 정상 변동에서 손절 발생.
+ * [목적] 진입 후 N분 이내는 EMA21 이탈 손절 미적용.
+ * [주요 값] 3분: 전략C BB grace period(3분)와 동일.
+ *           ENTRY_BREACH_GRACE_SEC(90초)보다 길게 설정해 두 조건이 중복 발동하는
+ *           구간(1.5~3분)에서 EMA21 이탈은 유예되도록 함.
+ */
+export const STRATEGY_F_EMA_BREAK_GRACE_MIN = 3;
 
 /** 레짐: 하드 차단만 (급락·패닉 시 매수 중단, downtrend+RS 미사용) */
 /** 급락 감지 lookback (5분봉 개수, 6개 = 30분) */

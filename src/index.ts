@@ -37,6 +37,7 @@ import {
   STRATEGY_C_TRAILING_ACTIVATE_PCT,
   STRATEGY_C_LOSS_COOLDOWN_MS,
   STRATEGY_D_LOSS_COOLDOWN_MS,
+  STRATEGY_D_MAX_DAILY_LOSS_COUNT,
   STRATEGY_F_COOLDOWN_MS,
   STRATEGY_F_LOSS_COOLDOWN_MS,
   STRATEGY_A_ENABLED,
@@ -102,6 +103,12 @@ const strategyCLossCooldownLastLog: Record<string, number> = {};
 const lossCooldown: Record<string, number> = {};
 /** 전략 D 쿨다운 차단 로그 쓰로틀 (종목별 마지막 로그 시각) */
 const lossCooldownLastLog: Record<string, number> = {};
+/**
+ * 전략 D 당일 종목별 누적 손절 횟수
+ * 일일 카운터 초기화(09:00 KST) 시 lossCooldown과 함께 초기화.
+ * STRATEGY_D_MAX_DAILY_LOSS_COUNT 이상이면 당일 재진입 금지.
+ */
+const strategyDLossCount: Record<string, number> = {};
 /** 전략 F 매도 종목 쿨다운 (종목별 F 매도 시각) */
 const strategyFCooldown: Record<string, number> = {};
 /** 전략 F 쿨다운 차단 로그 쓰로틀 (종목별 마지막 로그 시각) */
@@ -160,6 +167,9 @@ const resetDailyLossIfNewDay = (): void => {
     // 새 날짜 시작 시 전일 손절 횟수·쿨다운 모두 리셋 → 종목에 대해 당일 제한 없이 재시작.
     for (const k of Object.keys(strategyBLossCount)) delete strategyBLossCount[k];
     for (const k of Object.keys(strategyBLossCooldown)) delete strategyBLossCooldown[k];
+    // 전략 D 당일 손절 카운터 및 쿨다운 초기화
+    for (const k of Object.keys(strategyDLossCount)) delete strategyDLossCount[k];
+    for (const k of Object.keys(lossCooldown)) delete lossCooldown[k];
     logger.info(LOG_SOURCE, "일일 카운터 초기화 (새 날짜: %s)", today);
   }
 };
@@ -514,11 +524,20 @@ const run = async (): Promise<void> => {
               // 전략 D 손실 종목 쿨다운 등록
               if (strategyTag === "D" && finalNetPct < 0) {
                 lossCooldown[position.market] = Date.now();
+                strategyDLossCount[position.market] =
+                  (strategyDLossCount[position.market] ?? 0) + 1;
+                const dCount = strategyDLossCount[position.market]!;
+                const isDDailyBlocked =
+                  dCount >= STRATEGY_D_MAX_DAILY_LOSS_COUNT;
                 logger.info(
                   LOG_SOURCE,
-                  "[쿨다운] 전략D 손실 종목 등록: %s (순수익 %s%%)",
+                  "[쿨다운] 전략D 손실 종목 등록: %s (순수익 %s%%, 누적 %s회 → %s)",
                   position.market,
                   finalNetPct.toFixed(2),
+                  String(dCount),
+                  isDDailyBlocked
+                    ? "당일 진입 금지"
+                    : `다음쿨다운 ${STRATEGY_D_LOSS_COOLDOWN_MS / 60_000}분`,
                 );
               }
               // 전략 F 쿨다운 등록 [2차 수정]
@@ -864,19 +883,43 @@ const run = async (): Promise<void> => {
       }
 
       // 전략 D 쿨다운 체크
+      // [v3.11] 당일 손절 횟수 기반 블랙리스트 추가 — 전략 B 패턴과 동일.
+      //   STRATEGY_D_MAX_DAILY_LOSS_COUNT(2회) 이상 손절 시 당일 재진입 금지.
       let buyD = null;
       if (
         STRATEGY_D_ENABLED &&
         !(buyF?.shouldBuy || buyA?.shouldBuy || buyB?.shouldBuy || buyC?.shouldBuy)
       ) {
+        const dLossCount = strategyDLossCount[market] ?? 0;
+        const isDDailyBlocked = dLossCount >= STRATEGY_D_MAX_DAILY_LOSS_COUNT;
         const cooldownTime = lossCooldown[market];
-        if (
-          cooldownTime &&
-          Date.now() - cooldownTime < STRATEGY_D_LOSS_COOLDOWN_MS
-        ) {
+        const isCooldownActive =
+          !isDDailyBlocked &&
+          !!cooldownTime &&
+          Date.now() - cooldownTime < STRATEGY_D_LOSS_COOLDOWN_MS;
+        if (isDDailyBlocked || isCooldownActive) {
+          // 당일 금지 또는 쿨다운 중 — 전환 시점에만 1회 로그 (매 틱 스팸 방지)
+          const lastLog = lossCooldownLastLog[market] ?? 0;
+          if (Date.now() - lastLog > 60_000) {
+            lossCooldownLastLog[market] = Date.now();
+            logger.info(
+              LOG_SOURCE,
+              "[BT] D 매수 스킵 %s: %s (누적손절 %s회)",
+              isDDailyBlocked ? "당일진입금지" : "쿨다운",
+              market,
+              String(dLossCount),
+            );
+          }
         } else {
-          // 쿨다운 만료된 경우 맵에서 제거
+          // 쿨다운 만료 시 재진입 허용 — 만료 시점 1회 로그
           if (cooldownTime) {
+            logger.info(
+              LOG_SOURCE,
+              "[BT] D 쿨다운 만료 재진입 허용: %s (누적손절 %s회, %s분 경과)",
+              market,
+              String(dLossCount),
+              Math.floor((Date.now() - cooldownTime) / 60_000).toFixed(0),
+            );
             delete lossCooldown[market];
             delete lossCooldownLastLog[market];
           }
