@@ -40,6 +40,8 @@ import { logger } from "../logger";
 const LOG_SOURCE = "strategyF";
 /** EMA21 이탈 버퍼 유예 상태 (마켓별) — 전환 시점에만 로그 */
 const emaBreakSaveState = new Map<string, boolean>();
+/** VWAP-EMA 괴리 스킵 상태 (마켓별) — 전환 시점에만 로그 */
+const vwapEmaGapSkipState = new Map<string, boolean>();
 
 const KST_OFFSET_MS = 9 * 60 * 60 * 1000;
 
@@ -155,15 +157,26 @@ export const checkBuySignalF = (
     // 당일 거래 무게중심에서 이탈한 고점 진입이 됨.
     const vwapEmaGapPct = ((ema21 - vwap1m) / ema21) * 100;
     if (vwapEmaGapPct > STRATEGY_F_VWAP_EMA_GAP_MAX_PCT) {
+      if (!vwapEmaGapSkipState.get(market)) {
+        logger.info(
+          LOG_SOURCE,
+          "[BT] F 매수 스킵 VWAP괴리 — 시작 vwapEmaGap=%s%% thr=%s%% vwap1m=%s ema21=%s",
+          vwapEmaGapPct.toFixed(2),
+          String(STRATEGY_F_VWAP_EMA_GAP_MAX_PCT),
+          vwap1m.toFixed(0),
+          ema21.toFixed(0),
+        );
+        vwapEmaGapSkipState.set(market, true);
+      }
+      return null;
+    } else if (vwapEmaGapSkipState.get(market)) {
       logger.info(
         LOG_SOURCE,
-        "[BT] F 매수 스킵 VWAP괴리 vwapEmaGap=%s%% thr=%s%% vwap1m=%s ema21=%s",
+        "[BT] F 매수 스킵 VWAP괴리 해제 — 끝 vwapEmaGap=%s%% thr=%s%%",
         vwapEmaGapPct.toFixed(2),
         String(STRATEGY_F_VWAP_EMA_GAP_MAX_PCT),
-        vwap1m.toFixed(0),
-        ema21.toFixed(0),
       );
-      return null;
+      vwapEmaGapSkipState.set(market, false);
     }
 
     // [조건 3] 현재가 ≤ max(VWAP_1m, EMA21) × (1 + PROXIMITY_PCT/100) — 눌림목 위치
