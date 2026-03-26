@@ -236,7 +236,8 @@ export const DAILY_LOSS_BUFFER_PCT = 1.5;
 export const STRATEGY_A_ENABLED = true;
 export const STRATEGY_B_ENABLED = true;
 export const STRATEGY_C_ENABLED = true;
-export const STRATEGY_D_ENABLED = true;
+// [v3.12.20260326] 전략 D 비활성화 — 구조적 손실 다수 (레짐 해제 직후 진입, 저유동성 MA20 손절 등), 수정 효과 검증 전 일시 중단.
+export const STRATEGY_D_ENABLED = false;
 /**
  * ══════════════════════════════════════════════════════════════════
  * [v3.5.20260315] 전략 E 영구 비활성화 — 2026-03-12~15 실전 결과 기반
