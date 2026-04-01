@@ -16,12 +16,15 @@ import { checkBuySignalC, checkSellSignalC } from "./strategy/strategyC";
 import { checkBuySignalD, checkSellSignalD } from "./strategy/strategyD";
 import { checkBuySignalE, checkSellSignalE } from "./strategy/strategyE";
 import { checkBuySignalF, checkSellSignalF } from "./strategy/strategyF";
+import { checkBuySignalT1, checkSellSignalT1 } from "./strategy/trend/strategyT1";
+import { setCandles1h } from "./data/candleWindow1h";
 import {
   executeMarketBuy,
   executeMarketSell,
   fetchVolume,
   fetchAvgBuyPrice,
 } from "./execution/order";
+import { executeMarketBuyT1 } from "./execution/orderT1";
 import { calculateATR } from "./indicators";
 import {
   CANDLE_WINDOW_SIZE,
@@ -46,6 +49,9 @@ import {
   STRATEGY_D_ENABLED,
   STRATEGY_E_ENABLED,
   STRATEGY_F_ENABLED,
+  STRATEGY_T1_ENABLED,
+  CANDLE_WINDOW_SIZE_1H,
+  STRATEGY_T1_TRAILING_ACTIVATE_PCT,
 } from "./config";
 import { logger } from "./logger";
 import { writeTradeLog, tradeLogPath } from "./tradeLogger";
@@ -231,6 +237,15 @@ const run = async (): Promise<void> => {
         (e as Error).message,
       );
     }
+    if (STRATEGY_T1_ENABLED) {
+      try {
+        const btcCandles1h = await fetchCandles("KRW-BTC", CANDLE_WINDOW_SIZE_1H, "minutes60");
+        setCandles1h("KRW-BTC", btcCandles1h);
+        logger.info(LOG_SOURCE, "[T1] BTC 1h 캔들 적재 완료 (%s봉)", String(btcCandles1h.length));
+      } catch (e) {
+        logger.warn(LOG_SOURCE, "BTC 1h 캔들 사전 적재 실패: %s", (e as Error).message);
+      }
+    }
 
     const markets = await selectTopMarkets();
     if (markets.length === 0) {
@@ -245,6 +260,15 @@ const run = async (): Promise<void> => {
       ]);
       setCandles(market, candles1m, 1);
       setCandles(market, candles5m, 5);
+      if (STRATEGY_T1_ENABLED) {
+        try {
+          const candles1h = await fetchCandles(market, CANDLE_WINDOW_SIZE_1H, "minutes60");
+          setCandles1h(market, candles1h);
+          logger.info(LOG_SOURCE, "[T1] %s 1h 캔들 적재 완료 (%s봉)", market, String(candles1h.length));
+        } catch (e) {
+          logger.warn(LOG_SOURCE, "1h 캔들 사전 적재 실패 (%s): %s", market, (e as Error).message);
+        }
+      }
     }
     return markets;
   };
@@ -268,6 +292,14 @@ const run = async (): Promise<void> => {
       } catch (e) {
         logger.warn(LOG_SOURCE, "BTC 캔들 갱신 실패: %s", (e as Error).message);
       }
+      if (STRATEGY_T1_ENABLED) {
+        try {
+          const btcCandles1h = await fetchCandles("KRW-BTC", CANDLE_WINDOW_SIZE_1H, "minutes60");
+          setCandles1h("KRW-BTC", btcCandles1h);
+        } catch (e) {
+          logger.warn(LOG_SOURCE, "BTC 1h 캔들 갱신 실패: %s", (e as Error).message);
+        }
+      }
 
       for (const market of currentMarkets) {
         try {
@@ -284,6 +316,14 @@ const run = async (): Promise<void> => {
             market,
             (e as Error).message,
           );
+        }
+        if (STRATEGY_T1_ENABLED) {
+          try {
+            const candles1h = await fetchCandles(market, CANDLE_WINDOW_SIZE_1H, "minutes60");
+            setCandles1h(market, candles1h);
+          } catch (e) {
+            logger.warn(LOG_SOURCE, "1h 캔들 갱신 실패 (%s): %s", market, (e as Error).message);
+          }
         }
       }
 
@@ -398,6 +438,26 @@ const run = async (): Promise<void> => {
             }
           }
         }
+        if (position.strategy === "T1") {
+          if (curNetPct >= STRATEGY_T1_TRAILING_ACTIVATE_PCT) {
+            if (!position.trailingActivated) {
+              logger.info(
+                LOG_SOURCE,
+                "[BT] T1 트레일링 활성화: %s 순수익 %s%% (기준 %s%%)",
+                market,
+                curNetPct.toFixed(2),
+                String(STRATEGY_T1_TRAILING_ACTIVATE_PCT),
+              );
+              position.trailingActivated = true;
+            }
+            if (
+              position.highestPrice == null ||
+              price > position.highestPrice
+            ) {
+              position.highestPrice = price;
+            }
+          }
+        }
 
         let sellSignal: {
           shouldSell: boolean;
@@ -431,6 +491,8 @@ const run = async (): Promise<void> => {
           sellSignal = checkSellSignalE(position.market, position, price);
         } else if (position.strategy === "F") {
           sellSignal = checkSellSignalF(position.market, position, price);
+        } else if (position.strategy === "T1") {
+          sellSignal = checkSellSignalT1(position.market, position, price);
         } else {
           sellSignal = checkSellSignal(
             position.market,
@@ -585,7 +647,7 @@ const run = async (): Promise<void> => {
                 dailyProfitStr,
                 String(dailyTradeCount),
               );
-              const strategyParts = (["A", "B", "C", "D", "E", "F"] as const)
+              const strategyParts = (["A", "B", "C", "D", "E", "F", "T1"] as const)
                 .filter((s) => strategyCumulativePct[s] != null)
                 .map((s) => {
                   const pct = strategyCumulativePct[s];
@@ -717,18 +779,31 @@ const run = async (): Promise<void> => {
       //   하락 중인 종목에 전략 A~F 모두 반복 진입 → 손절 반복.
       // [우선순위] crashing → panicVolume → bearTrend 순으로 체크.
       //   bearTrend는 가장 완화된 기준이므로 하드 차단(급락/패닉) 이후에 배치.
+      // [T1 예외] T1은 BTC 1h EMA20/EMA50 추세를 자체적으로 확인하므로 bearTrend 면제.
+      //   T1만 활성화된 경우(A~F 모두 비활성화) bearTrend에도 T1 신호 체크를 허용.
+      //   A~F 중 하나라도 활성화되어 있으면 기존대로 전체 차단 유지.
       // [앞으로 확인할 것]
       //   로그에서 "(시작)/(종료)" 빈도를 보고 차단이 과도하면
       //   config.ts의 REGIME_BTC_MA_SLOW 값을 30~50으로 상향 조정.
       if (regime.bearTrend) {
+        const onlyT1Active =
+          STRATEGY_T1_ENABLED &&
+          !STRATEGY_A_ENABLED &&
+          !STRATEGY_B_ENABLED &&
+          !STRATEGY_C_ENABLED &&
+          !STRATEGY_D_ENABLED &&
+          !STRATEGY_E_ENABLED &&
+          !STRATEGY_F_ENABLED;
         if (!regimeBlockBearTrendActive) {
           regimeBlockBearTrendActive = true;
           logger.debug(
             LOG_SOURCE,
-            "[레짐 차단] BTC MA 하락 추세, 전략 무관 매수 중단 (시작)",
+            onlyT1Active
+              ? "[레짐 차단] BTC MA 하락 추세 감지 (T1 전용 모드: 1h 자체 필터로 대체, 차단 제외)"
+              : "[레짐 차단] BTC MA 하락 추세, 전략 무관 매수 중단 (시작)",
           );
         }
-        return;
+        if (!onlyT1Active) return;
       }
       if (regimeBlockBearTrendActive) {
         regimeBlockBearTrendActive = false;
@@ -936,7 +1011,18 @@ const run = async (): Promise<void> => {
           ? null
           : checkBuySignalE(market, price);
 
-      const buySignal = buyF ?? buyA ?? buyB ?? buyC ?? buyD ?? buyE;
+      const buyT1 =
+        buyF?.shouldBuy ||
+        buyA?.shouldBuy ||
+        buyB?.shouldBuy ||
+        buyC?.shouldBuy ||
+        buyD?.shouldBuy ||
+        buyE?.shouldBuy ||
+        !STRATEGY_T1_ENABLED
+          ? null
+          : checkBuySignalT1(market, price);
+
+      const buySignal = buyF ?? buyA ?? buyB ?? buyC ?? buyD ?? buyE ?? buyT1;
       if (!buySignal?.shouldBuy) return;
       isBuying = true;
       const strategy = buySignal.strategy ?? undefined;
@@ -948,7 +1034,10 @@ const run = async (): Promise<void> => {
           buySignal.reason,
           price.toFixed(0),
         );
-        const res = await executeMarketBuy(ACCESS_KEY, SECRET_KEY, market);
+        const res =
+          strategy === "T1"
+            ? await executeMarketBuyT1(ACCESS_KEY, SECRET_KEY, market)
+            : await executeMarketBuy(ACCESS_KEY, SECRET_KEY, market);
         if (res.ok && res.order) {
           /**
            * ──────────────────────────────────────────────────────────────
@@ -1060,9 +1149,9 @@ const run = async (): Promise<void> => {
             entryLow,
             entryAtr,
             highestPrice:
-              strategy === "C" || strategy === "B" ? price : undefined,
+              strategy === "C" || strategy === "B" || strategy === "T1" ? price : undefined,
             trailingActivated:
-              strategy === "C" || strategy === "B" ? false : undefined,
+              strategy === "C" || strategy === "B" || strategy === "T1" ? false : undefined,
           };
           logger.info(
             LOG_SOURCE,

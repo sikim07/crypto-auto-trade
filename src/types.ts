@@ -103,7 +103,7 @@ export interface BotPosition {
   volume: string;
   buyTime: number;
   maxNetPct: number;
-  strategy?: "A" | "B" | "C" | "D" | "E" | "F";
+  strategy?: "A" | "B" | "C" | "D" | "E" | "F" | "T1";
   entryLow?: number;
   entryAtr?: number;
   highestPrice?: number;

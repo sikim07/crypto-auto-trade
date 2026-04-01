@@ -95,7 +95,7 @@ export const SELECT_DOWNWARD_WEIGHT = 0.5;
  * ══════════════════════════════════════════════════════════════════
  */
 /** 종목 선정 최대 하락률 필터 — 24h 등락률이 이 값 이상 하락한 종목은 후보에서 완전 제외 */
-export const SELECT_MAX_DOWNWARD_RATE = 0.10;
+export const SELECT_MAX_DOWNWARD_RATE = 0.1;
 
 /** 주문/잔고 */
 /** @deprecated 매수 금액은 POSITION_PCT 기준으로 계산. 참고용 유지 */
@@ -233,9 +233,12 @@ export const DAILY_LOSS_BUFFER_PCT = 1.5;
  *   - E전략: 신호 발생 빈도가 극히 낮으므로 false 후 효과 관찰 권장
  * ──────────────────────────────────────────────────────────────
  */
-export const STRATEGY_A_ENABLED = true;
-export const STRATEGY_B_ENABLED = true;
-export const STRATEGY_C_ENABLED = true;
+// 일시 비활성화
+export const STRATEGY_A_ENABLED = false;
+// 일시 비활성화
+export const STRATEGY_B_ENABLED = false;
+// 일시 비활성화
+export const STRATEGY_C_ENABLED = false;
 // [v3.12.20260326] 전략 D 비활성화 — 구조적 손실 다수 (레짐 해제 직후 진입, 저유동성 MA20 손절 등), 수정 효과 검증 전 일시 중단.
 export const STRATEGY_D_ENABLED = false;
 /**
@@ -275,7 +278,8 @@ export const STRATEGY_D_ENABLED = false;
  *   false로만 관리하고 코드는 절대 삭제하지 말 것.
  */
 export const STRATEGY_E_ENABLED = false; // 영구 비활성화 — 위 경고 참조
-export const STRATEGY_F_ENABLED = true;
+// 일시 비활성화
+export const STRATEGY_F_ENABLED = false;
 
 /** 전략 A: 저점 정밀 타격 — RSI 과매도 기준, 거래량 평균 봉 수 */
 /** 역추세 전략 A: 하락장 진입 차단 — 5분봉 MA5 < MA20 이면 매수 스킵 (횡보/상승에서만 동작) */
@@ -1030,3 +1034,123 @@ export const REGIME_BTC_MA_SLOW = 30;
  *   - 추세 전환 감지 지연(0.2% 갭 형성까지 시간)으로 인한 초반 손실 케이스 확인.
  */
 export const REGIME_BTC_MA_HYSTERESIS_BAND = 0.002;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 전략 T1: BTC 1h 추세 추종 + 알트 EMA20 눌림목 진입 (중기 추세 추종)
+//
+// [전환 배경]
+//   기존 1분봉 스캘핑(A~F)은 공개 지표 기반이어서 정보 우위가 없고, 비용(0.25%)과
+//   손익비(0.67:1) 구조상 손익분기 승률 70%가 필요하나 달성이 어려움.
+//   T1은 타임프레임을 1h로 상향해 목표 +5~8%, 손절 -3%로 손익비 2:1 달성.
+//   손익분기 승률 33%로 낮춰 구조적 수익 가능성 확보.
+//
+// [운영 모드 전환]
+//
+//   ① T1 전용 모드 (권장):
+//     STRATEGY_T1_ENABLED = true
+//     STRATEGY_A~F_ENABLED = false (전부)
+//     → bearTrend 레짐 필터 면제 (T1 자체 1h EMA 필터로 대체)
+//     → 포지션 1.5%, 손절 -3%, 최대보유 48h
+//
+//   ② 혼합 모드 (비권장):
+//     STRATEGY_T1_ENABLED = true + A~F 일부 true
+//     → A~F가 먼저 포지션을 잡으면 T1은 완전히 차단됨
+//     → bearTrend가 T1에도 적용되어 1h 상승 추세 중 5m 조정에도 차단될 수 있음
+//
+//   ③ 스캘핑 전용 모드:
+//     STRATEGY_T1_ENABLED = false (현재)
+//     → 기존 A~F 스캘핑 동작 유지, T1 관련 코드 완전 비활성화
+//
+// [개선 방향]
+//   - 실전 데이터 수집 후 EMA_PROXIMITY_PCT, RSI_MIN/MAX, VOLUME 조건 조정
+//   - 승률/손익비 데이터 누적 후 TRAILING_ACTIVATE_PCT, STOP_LOSS_PCT 튜닝
+//   - 거래량 조건(눌림봉 < 평균): 향후 눌림봉 확인 창(봉 수) 파라미터화 고려
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** T1 활성화 플래그. false면 T1 매수 신호 체크를 완전히 생략 (기존 스캘핑 모드 유지) */
+export const STRATEGY_T1_ENABLED = true;
+
+/** 1h 캔들 저장 최대 개수. EMA50 계산에 최소 50개 필요. 여유분 포함 200 */
+export const CANDLE_WINDOW_SIZE_1H = 200;
+
+/**
+ * T1 포지션 크기 (잔고 대비 비율).
+ * 손절 -3%이므로 기존 POSITION_PCT(3%)의 절반으로 설정.
+ * 실제 최대 손실 금액은 기존 스캘핑과 동일 수준 유지.
+ */
+export const STRATEGY_T1_POSITION_PCT = 0.015;
+
+/**
+ * 손절 기준 순수익률(%). 1h 전략으로 변동성이 크므로 기존(-1.5%)보다 넓게 설정.
+ * 손익비: 목표 +5~8% / 손절 -3% = 약 2:1 → 손익분기 승률 33%.
+ * 기존 스캘핑(0.67:1) 대비 구조적으로 유리한 손익비 확보.
+ */
+export const STRATEGY_T1_STOP_LOSS_PCT = -3.0;
+
+/**
+ * 트레일링 스톱 활성화 기준 순수익률(%).
+ * +2% 수익 확보 후 트레일링 시작. 초반 노이즈로 인한 조기 청산 방지.
+ * 개선 방향: 실전 데이터에서 T1 최대 수익 분포 확인 후 1.5~2.5% 사이 조정.
+ */
+export const STRATEGY_T1_TRAILING_ACTIVATE_PCT = 2.0;
+
+/**
+ * 트레일링 스톱 오프셋(%). 고점 대비 이 비율 하락 시 청산.
+ * 1.5% 설정으로 +2% 활성화 시 최소 +0.5% 수익 보장.
+ * 개선 방향: 목표 +5%+ 달성 시 오프셋 확대(2%) 검토.
+ */
+export const STRATEGY_T1_TRAILING_OFFSET_PCT = 1.5;
+
+/**
+ * 최대 보유 시간(시간 단위). 48시간 후 시간 초과 청산.
+ * 장기 횡보 시 기회비용 방지. 개선 방향: 실전 평균 보유 시간 데이터 수집 후 조정.
+ */
+export const STRATEGY_T1_MAX_HOLD_HOURS = 48;
+
+/**
+ * Alt RSI 진입 하한. 이 값 미만이면 이미 과매도 구간으로 반등 불확실.
+ * 튜닝 기준: 10회+ 매매 후 RSI 40 미만 진입 건의 손익 분포 확인.
+ *   신호가 너무 적으면 35로 완화, 손절 비율이 높으면 45로 상향.
+ */
+export const STRATEGY_T1_RSI_MIN = 40;
+
+/**
+ * Alt RSI 진입 상한. 이 값 초과면 이미 과매수 → 추가 상승 여력 제한.
+ * 튜닝 기준: RSI 65 초과 진입 건 중 손익분기를 넘긴 비율.
+ *   신호가 너무 적으면 70으로 완화, 고점 물림이 잦으면 60으로 축소.
+ */
+export const STRATEGY_T1_RSI_MAX = 65;
+
+/**
+ * BTC RSI 최소 기준. BTC 모멘텀이 양성(> 50)일 때만 알트 진입 허용.
+ * 튜닝 기준: bearTrend 면제 이후에도 BTC RSI 50 조건이 신호를 과도하게 차단하면 45로 완화.
+ */
+export const STRATEGY_T1_BTC_RSI_MIN = 50;
+
+/**
+ * 눌림목 허용 범위(%). 현재가가 Alt EMA20 ~ EMA20×(1+PCT/100) 이내일 때 눌림목으로 판단.
+ * 기본 1.0%: EMA20에 정확히 닿지 않아도 1% 이내 근접이면 진입 허용.
+ * 튜닝 기준: 실전 기동 후 "[시그널] T1 매수" 로그 발생 빈도가 1일 1회 미만이면 1.5~2.0%로 완화.
+ *   반대로 노이즈 진입이 잦으면 0.5%로 축소.
+ */
+export const STRATEGY_T1_EMA_PROXIMITY_PCT = 1.0;
+
+/**
+ * Alt EMA20 이탈 손절 기준(%). EMA20 대비 이 비율 이하로 하락 시 추세 이탈로 판단.
+ * 0.5% 버퍼: 단순 EMA20 하향(currentPrice < EMA20)만으로 손절하면 노이즈로 빈번 청산.
+ * 개선 방향: 이탈 손절 빈도가 높으면 1.0%로 확대.
+ */
+export const STRATEGY_T1_EMA_BREAK_PCT = 0.5;
+
+/** EMA 단기선 기간 (알트 상승 추세 + 눌림목 판단용) */
+export const STRATEGY_T1_EMA_SHORT = 20;
+
+/** EMA 장기선 기간 (BTC/Alt 장기 추세 판단용) */
+export const STRATEGY_T1_EMA_LONG = 50;
+
+/**
+ * 눌림봉 거래량 평균 계산 봉 수.
+ * 현재 봉 거래량 < 직전 20봉 평균이면 "조용한 눌림목"으로 판단.
+ * 개선 방향: 거래량 조건이 신호를 과도하게 차단하면 10~15로 축소.
+ */
+export const STRATEGY_T1_VOLUME_AVG_PERIOD = 20;
