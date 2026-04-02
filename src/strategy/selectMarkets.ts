@@ -77,7 +77,7 @@ export const selectTopMarkets = async (): Promise<string[]> => {
     .sort((a, b) => b.score - a.score);
 
   const selected = byVolatility.slice(0, TARGET_MARKET_COUNT);
-  logger.info(
+  logger.debug(
     LOG_SOURCE,
     "거래대금 상위 %s개 중 상방 변동성 상위 %s개 선정: %s",
     String(topCount),
@@ -92,7 +92,7 @@ export const selectTopMarkets = async (): Promise<string[]> => {
     0,
     Math.min(TARGET_MARKET_COUNT + 2, byVolatility.length),
   );
-  logger.info(
+  logger.debug(
     LOG_SOURCE,
     "[BT] 상방 후보: %s",
     btCandidates

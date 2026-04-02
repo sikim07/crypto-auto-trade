@@ -145,6 +145,8 @@ let regimeBlockPanicVolumeActive = false;
  *   - 차단 구간과 실제 BTC 가격 흐름을 대조해 필터 적절성 검증
  */
 let regimeBlockBearTrendActive = false;
+/** bearTrend가 처음 감지된 시각. 해제 시 재선정 여부 판단용 (5분 미만 진동은 노이즈로 간주) */
+let regimeBlockBearTrendStartTime = 0;
 
 /** [대기] 로그: 직전에 출력한 상태(상황이 바뀔 때만 재출력) */
 let lastWaitLogSnapshot: string | null = null;
@@ -241,7 +243,6 @@ const run = async (): Promise<void> => {
       try {
         const btcCandles1h = await fetchCandles("KRW-BTC", CANDLE_WINDOW_SIZE_1H, "minutes60");
         setCandles1h("KRW-BTC", btcCandles1h);
-        logger.info(LOG_SOURCE, "[T1] BTC 1h 캔들 적재 완료 (%s봉)", String(btcCandles1h.length));
       } catch (e) {
         logger.warn(LOG_SOURCE, "BTC 1h 캔들 사전 적재 실패: %s", (e as Error).message);
       }
@@ -252,7 +253,14 @@ const run = async (): Promise<void> => {
       logger.error(LOG_SOURCE, "치명적: 선정된 종목이 없습니다.");
       return [];
     }
-    logger.info(LOG_SOURCE, "종목 선정: %s", markets.join(", "));
+    const marketsChanged =
+      markets.length !== currentMarkets.length ||
+      markets.some((m) => !currentMarkets.includes(m));
+    if (marketsChanged) {
+      logger.info(LOG_SOURCE, "종목 선정 (변경): %s", markets.join(", "));
+    } else {
+      logger.debug(LOG_SOURCE, "종목 선정 (유지): %s", markets.join(", "));
+    }
     for (const market of markets) {
       const [candles1m, candles5m] = await Promise.all([
         fetchCandles(market, CANDLE_WINDOW_SIZE, "minutes1"),
@@ -264,7 +272,6 @@ const run = async (): Promise<void> => {
         try {
           const candles1h = await fetchCandles(market, CANDLE_WINDOW_SIZE_1H, "minutes60");
           setCandles1h(market, candles1h);
-          logger.info(LOG_SOURCE, "[T1] %s 1h 캔들 적재 완료 (%s봉)", market, String(candles1h.length));
         } catch (e) {
           logger.warn(LOG_SOURCE, "1h 캔들 사전 적재 실패 (%s): %s", market, (e as Error).message);
         }
@@ -323,6 +330,58 @@ const run = async (): Promise<void> => {
             setCandles1h(market, candles1h);
           } catch (e) {
             logger.warn(LOG_SOURCE, "1h 캔들 갱신 실패 (%s): %s", market, (e as Error).message);
+          }
+        }
+      }
+
+      // ── 캔들 고가 기반 highestPrice 보정 ──────────────────────────
+      // WebSocket 공백(재연결, 네트워크 단절 등) 중 틱을 수신하지 못한 경우
+      // position.highestPrice 추적이 끊겨 트레일링 활성화를 놓칠 수 있음.
+      // setInterval이 60초마다 1m 캔들을 REST로 갱신하므로, 캔들 고가로 보정.
+      // 대상: B, C, T1 (trailingActivated + highestPrice 사용 전략)
+      if (
+        position &&
+        (position.strategy === "B" ||
+          position.strategy === "C" ||
+          position.strategy === "T1")
+      ) {
+        const candles1m = getCandles(position.market, 1);
+        // 매수한 분(minute)은 제외: 매수 직전 같은 분의 고가가 포함되면
+        // 실제로 도달하지 않은 가격으로 trailingActivated가 오작동할 수 있음.
+        // 매수 다음 분봉부터만 신뢰할 수 있는 고가로 간주.
+        const nextMinuteAfterBuy = minuteStart(position.buyTime) + 60_000;
+        const candlesSinceBuy = candles1m.filter(
+          (c) => c.timestamp >= nextMinuteAfterBuy,
+        );
+        if (candlesSinceBuy.length > 0) {
+          const candleHigh = Math.max(
+            ...candlesSinceBuy.map((c) => c.high_price),
+          );
+          if (
+            position.highestPrice == null ||
+            candleHigh > position.highestPrice
+          ) {
+            position.highestPrice = candleHigh;
+            const netPctAtHigh = getNetProfitPct(
+              position.buyPrice,
+              candleHigh,
+            );
+            const activatePct =
+              position.strategy === "T1"
+                ? STRATEGY_T1_TRAILING_ACTIVATE_PCT
+                : position.strategy === "B"
+                  ? STRATEGY_B_TRAILING_ACTIVATE_PCT
+                  : STRATEGY_C_TRAILING_ACTIVATE_PCT;
+            if (!position.trailingActivated && netPctAtHigh >= activatePct) {
+              position.trailingActivated = true;
+              logger.info(
+                LOG_SOURCE,
+                "[포지션 보정] %s 트레일링 활성화 (캔들 고가 보정): 고가 %s, 순수익 %s%%",
+                position.market,
+                candleHigh.toFixed(0),
+                netPctAtHigh.toFixed(2),
+              );
+            }
           }
         }
       }
@@ -796,6 +855,7 @@ const run = async (): Promise<void> => {
           !STRATEGY_F_ENABLED;
         if (!regimeBlockBearTrendActive) {
           regimeBlockBearTrendActive = true;
+          regimeBlockBearTrendStartTime = Date.now();
           logger.debug(
             LOG_SOURCE,
             onlyT1Active
@@ -807,7 +867,8 @@ const run = async (): Promise<void> => {
       }
       if (regimeBlockBearTrendActive) {
         regimeBlockBearTrendActive = false;
-        logger.debug(LOG_SOURCE, "[레짐 차단] BTC MA 하락 추세 해제 (종료)");
+        const bearTrendActiveDurationMs = Date.now() - regimeBlockBearTrendStartTime;
+        logger.debug(LOG_SOURCE, "[레짐 차단] BTC MA 하락 추세 해제 (활성 %s분)", Math.floor(bearTrendActiveDurationMs / 60_000).toFixed(0));
         // [v3.7.20260318] 레짐 해제 시 즉시 종목 재선정
         //
         // [수정 이유]
@@ -817,15 +878,18 @@ const run = async (): Promise<void> => {
         //         (2026-03-17 08:41 해제 → 08:51 EDGE 진입 → 09:00 손절 -1.55%:
         //          차단 중 EDGE가 추가 하락했으나 재선정 없이 그대로 진입)
         //
-        // [목적]
-        //   현재 시점 기준으로 종목 상태를 재평가해 레짐 해제 직후 손절 방지.
-        //   재선정 후 return → 현재 틱의 market(구 종목)에서는 매수 시도 안 함.
-        //   다음 틱부터 새 종목 기준으로 정상 처리.
-        //
-        // [앞으로 확인할 것]
-        //   - 레짐 해제 직후 새로 선정된 종목이 구 종목보다 성과가 좋은지 사후 확인.
-        //   - selectAndLoad 실패 시 기존 종목 유지 (failsafe: 변경 없음).
-        {
+        // [debounce] 5분 미만 활성은 노이즈로 간주해 재선정 생략.
+        //   BTC MA5 ≈ MA20 구간에서 1분 단위로 true↔false 진동 시
+        //   매분 selectAndLoad 호출(API 낭비 + 로그 폭증) 방지.
+        //   5분 이상 지속된 추세 이탈만 실질적 하락 추세로 판단해 재선정.
+        if (bearTrendActiveDurationMs < 5 * 60_000) {
+          logger.info(
+            LOG_SOURCE,
+            "[레짐 해제] bearTrend %s분 활성 → 5분 미만 노이즈, 종목 재선정 생략",
+            Math.floor(bearTrendActiveDurationMs / 60_000).toFixed(0),
+          );
+        }
+        if (bearTrendActiveDurationMs >= 5 * 60_000) {
           const nextMarkets = await selectAndLoad();
           if (nextMarkets.length > 0) {
             currentMarkets = nextMarkets;
@@ -837,12 +901,13 @@ const run = async (): Promise<void> => {
             );
             logger.info(
               LOG_SOURCE,
-              "[레짐 해제] 종목 재선정 완료: %s",
+              "[레짐 해제] 종목 재선정 완료: %s (bearTrend 활성 %s분)",
               currentMarkets.join(", "),
+              Math.floor(bearTrendActiveDurationMs / 60_000).toFixed(0),
             );
           }
         }
-        return; // 재선정 완료 — 현재 틱 이벤트 종료, 다음 틱부터 새 종목으로 처리
+        return; // 현재 틱 이벤트 종료, 다음 틱부터 정상 처리
       }
 
       // ── 전략별 매수 신호 검사 ──────────────────────────────────────
