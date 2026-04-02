@@ -1061,8 +1061,7 @@ const run = async (): Promise<void> => {
           );
         }
         if (!onlyT1Active) return;
-      }
-      if (regimeBlockBearTrendActive) {
+      } else if (regimeBlockBearTrendActive) {
         regimeBlockBearTrendActive = false;
         const bearTrendActiveDurationMs = Date.now() - regimeBlockBearTrendStartTime;
         logger.debug(LOG_SOURCE, "[레짐 차단] BTC MA 하락 추세 해제 (활성 %s분)", Math.floor(bearTrendActiveDurationMs / 60_000).toFixed(0));

@@ -355,9 +355,3 @@ export const checkSellSignalT1 = (
   return { shouldSell: false };
 };
 
-/**
- * T1 트레일링 활성화 기준 반환. index.ts에서 포지션 고점 추적 판단에 사용.
- * maxNetPct >= 이 값이면 trailingActivated = true로 설정.
- */
-export const getT1TrailingActivatePct = (): number =>
-  STRATEGY_T1_TRAILING_ACTIVATE_PCT;

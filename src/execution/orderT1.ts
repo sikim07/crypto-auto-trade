@@ -44,7 +44,7 @@ const fetchKrwBalance = async (
   return krw ? parseFloat(krw.balance) : 0;
 };
 
-/** 주문 후 대기 → 자산 재조회 (기존 confirmOrderWithRetry와 동일 로직) */
+/** 주문 후 대기 → 자산 재조회 (최초 스냅샷과 비교해 변화 감지) */
 const confirmOrderWithRetry = async (
   accessKey: string,
   secretKey: string,
@@ -56,14 +56,13 @@ const confirmOrderWithRetry = async (
       .map((a) => `${a.currency}:${a.balance}`)
       .sort()
       .join("|");
-  let prev = snapshot(accounts);
+  const prev = snapshot(accounts);
   let retries = 0;
   while (retries < CONFIRM_RETRY_MAX) {
     await new Promise((r) => setTimeout(r, CONFIRM_RETRY_INTERVAL_MS));
     accounts = await getAccounts(accessKey, secretKey);
     const curr = snapshot(accounts);
     if (curr !== prev) return;
-    prev = curr;
     retries += 1;
   }
 };
