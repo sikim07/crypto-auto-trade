@@ -52,6 +52,11 @@ import {
   STRATEGY_T1_ENABLED,
   CANDLE_WINDOW_SIZE_1H,
   STRATEGY_T1_TRAILING_ACTIVATE_PCT,
+  STRATEGY_B_STOP_LOSS_PCT,
+  STRATEGY_C_STOP_LOSS_PCT,
+  STRATEGY_D_STOP_LOSS_PCT,
+  STRATEGY_F_STOP_LOSS_PCT,
+  STRATEGY_T1_STOP_LOSS_PCT,
 } from "./config";
 import { logger } from "./logger";
 import { writeTradeLog, tradeLogPath } from "./tradeLogger";
@@ -286,8 +291,18 @@ const run = async (): Promise<void> => {
   /** 마지막 종목 선정 시각 (재선정 주기 판단용) */
   let lastSelectTime = Date.now();
 
+  /**
+   * setInterval 중복 실행 방지 플래그.
+   * setInterval은 이전 async 콜백이 끝나지 않아도 다음을 실행하므로,
+   * REST 호출이 느릴 때(최대 10s×7건=70s) 두 번째 interval이 겹쳐
+   * API 요청이 폭발적으로 증가해 429를 유발할 수 있음.
+   */
+  let isIntervalRunning = false;
+
   /** 주기: 캔들 REST 갱신(거래량 보정) + 포지션 상태 로그 + 매수 없을 때 N분 경과 시 종목 재선정 */
   setInterval(async () => {
+    if (isIntervalRunning) return;
+    isIntervalRunning = true;
     try {
       try {
         const [btcCandles1m, btcCandles5m] = await Promise.all([
@@ -386,6 +401,177 @@ const run = async (): Promise<void> => {
         }
       }
 
+      // ── 캔들 저가 기반 손절 소급 보정 ──────────────────────────────────
+      // WebSocket 공백 중 손절선을 일시 이탈했다가 회복한 경우, 틱 기반 손절이 누락됨.
+      // 캔들 저가로 소급 확인해 손절 조건 충족 시 즉시 매도.
+      // 대상: B, C, D, F, T1 (% 기반 단순 손절); A는 ATR 기반이라 소급 불가.
+      if (position && !isSelling) {
+        const stopLossPct =
+          position.strategy === "T1" ? STRATEGY_T1_STOP_LOSS_PCT
+          : position.strategy === "B" ? STRATEGY_B_STOP_LOSS_PCT
+          : position.strategy === "C" ? STRATEGY_C_STOP_LOSS_PCT
+          : position.strategy === "D" ? STRATEGY_D_STOP_LOSS_PCT
+          : position.strategy === "F" ? STRATEGY_F_STOP_LOSS_PCT
+          : null; // A: ATR 기반, 소급 불가
+
+        if (stopLossPct != null) {
+          const candles1mForStop = getCandles(position.market, 1);
+          const nextMinuteAfterBuyStop = minuteStart(position.buyTime) + 60_000;
+          const candlesSinceBuyStop = candles1mForStop.filter(
+            (c) => c.timestamp >= nextMinuteAfterBuyStop,
+          );
+          if (candlesSinceBuyStop.length > 0) {
+            const candleLow = Math.min(
+              ...candlesSinceBuyStop.map((c) => c.low_price),
+            );
+            const netPctAtLow = getNetProfitPct(position.buyPrice, candleLow);
+            if (netPctAtLow <= stopLossPct) {
+              isSelling = true;
+              const strategyTag = position.strategy ?? "legacy";
+              const curPrice = lastPrices[position.market] ?? candleLow;
+              logger.warn(
+                LOG_SOURCE,
+                "[손절 소급] [전략%s] %s 캔들 저가 %s 손절선 도달 (저가 순수익 %s%%, 기준 %s%%) — 현재가 %s로 매도",
+                strategyTag,
+                position.market,
+                candleLow.toFixed(0),
+                netPctAtLow.toFixed(2),
+                String(stopLossPct),
+                curPrice.toFixed(0),
+              );
+              try {
+                const res = await executeMarketSell(
+                  ACCESS_KEY,
+                  SECRET_KEY,
+                  position.market,
+                  position.volume,
+                );
+                if (res.ok) {
+                  const finalNetPct = getNetProfitPct(
+                    position.buyPrice,
+                    curPrice,
+                  );
+                  const tradeProfitKrw =
+                    (finalNetPct / 100) *
+                    (position.buyPrice * parseFloat(position.volume));
+                  dailyLossPct += finalNetPct;
+                  dailyProfitKrw += tradeProfitKrw;
+                  dailyTradeCount += 1;
+                  totalCumulativePct += finalNetPct;
+                  totalCumulativeKrw += tradeProfitKrw;
+                  totalTradeCount += 1;
+                  strategyCumulativePct[strategyTag] =
+                    (strategyCumulativePct[strategyTag] ?? 0) + finalNetPct;
+                  strategyCumulativeKrw[strategyTag] =
+                    (strategyCumulativeKrw[strategyTag] ?? 0) + tradeProfitKrw;
+                  // 전략별 쿨다운 등록 (손절이므로 finalNetPct < 0 확정)
+                  if (strategyTag === "B") {
+                    strategyBLossCooldown[position.market] = Date.now();
+                    strategyBLossCount[position.market] =
+                      (strategyBLossCount[position.market] ?? 0) + 1;
+                  }
+                  if (strategyTag === "C") {
+                    strategyCLossCooldown[position.market] = Date.now();
+                  }
+                  if (strategyTag === "D") {
+                    lossCooldown[position.market] = Date.now();
+                    strategyDLossCount[position.market] =
+                      (strategyDLossCount[position.market] ?? 0) + 1;
+                  }
+                  if (strategyTag === "F") {
+                    strategyFCooldown[position.market] = Date.now();
+                    strategyFLossCooldown[position.market] = Date.now();
+                  }
+                  const tradeProfitStr =
+                    tradeProfitKrw >= 0
+                      ? `+${Math.round(tradeProfitKrw).toLocaleString()}원`
+                      : `${Math.round(tradeProfitKrw).toLocaleString()}원`;
+                  const dailyProfitStr2 =
+                    dailyProfitKrw >= 0
+                      ? `+${Math.round(dailyProfitKrw).toLocaleString()}원`
+                      : `${Math.round(dailyProfitKrw).toLocaleString()}원`;
+                  const totalProfitStr =
+                    totalCumulativeKrw >= 0
+                      ? `+${Math.round(totalCumulativeKrw).toLocaleString()}원`
+                      : `${Math.round(totalCumulativeKrw).toLocaleString()}원`;
+                  logger.info(
+                    LOG_SOURCE,
+                    "[매도] [전략%s] 체결(소급): %s 수량 %s | 순수익 %s% %s | 일일 누적 %s% %s | 오늘 %s회차",
+                    strategyTag,
+                    position.market,
+                    position.volume,
+                    finalNetPct.toFixed(2),
+                    tradeProfitStr,
+                    dailyLossPct.toFixed(2),
+                    dailyProfitStr2,
+                    String(dailyTradeCount),
+                  );
+                  const strategyParts = (
+                    ["A", "B", "C", "D", "E", "F", "T1"] as const
+                  )
+                    .filter((s) => strategyCumulativePct[s] != null)
+                    .map((s) => {
+                      const pct = strategyCumulativePct[s];
+                      const krw = strategyCumulativeKrw[s] ?? 0;
+                      const krwStr =
+                        krw >= 0
+                          ? `+${Math.round(krw).toLocaleString()}원`
+                          : `${Math.round(krw).toLocaleString()}원`;
+                      return `${s}:${pct.toFixed(2)}% ${krwStr}`;
+                    });
+                  const strategyCumulativeStr =
+                    strategyParts.length > 0
+                      ? ` | 전략별 누적 ${strategyParts.join(" ")}`
+                      : "";
+                  const sellTradeLog = `${tradeLogTimestamp()} [매매기록] 매도(소급) | 전략${strategyTag} | ${position.market} | 수량 ${position.volume} | 순수익 ${finalNetPct.toFixed(2)}% ${tradeProfitStr} | 일일 누적 ${dailyLossPct.toFixed(2)}% ${dailyProfitStr2} (${dailyTradeCount}회) | 전체 누적 ${totalCumulativePct.toFixed(2)}% ${totalProfitStr} (${totalTradeCount}회)${strategyCumulativeStr}`;
+                  console.error(sellTradeLog);
+                  writeTradeLog(sellTradeLog);
+                  position = null;
+                  currentMarkets = await selectAndLoad();
+                  if (currentMarkets.length === 0) {
+                    logger.warn(
+                      LOG_SOURCE,
+                      "매도(소급) 후 종목 선정 없음, 30초 후 재시도...",
+                    );
+                    await sleep(30000);
+                    currentMarkets = await selectAndLoad();
+                  }
+                  if (currentMarkets.length === 0) {
+                    logger.error(
+                      LOG_SOURCE,
+                      "치명적: 재시도 후에도 종목 선정 실패. 프로세스 종료.",
+                    );
+                    process.exit(1);
+                  }
+                  lastSelectTime = Date.now();
+                  subscribeTicker(
+                    currentMarkets,
+                    handleTicker,
+                    "손절 소급 체결로 인한 종목 재선정(재연결)",
+                  );
+                } else {
+                  logger.error(
+                    LOG_SOURCE,
+                    "[매도 소급] [전략%s] 실패: %s",
+                    strategyTag,
+                    res.message,
+                  );
+                }
+              } catch (e) {
+                logger.error(
+                  LOG_SOURCE,
+                  "[매도 소급] [전략%s] 실행 중 오류: %s",
+                  strategyTag,
+                  (e as Error).message,
+                );
+              } finally {
+                isSelling = false;
+              }
+            }
+          }
+        }
+      }
+
       if (!position) {
         const marketsStr = currentMarkets.join(", ");
         const dailyProfitStr =
@@ -411,24 +597,35 @@ const run = async (): Promise<void> => {
         Date.now() - lastSelectTime >=
           RE_SELECT_AFTER_NO_BUY_MINUTES * 60 * 1000
       ) {
-        const next = await selectAndLoad();
-        if (next.length > 0) {
-          currentMarkets = next;
-          lastSelectTime = Date.now();
-          subscribeTicker(
-            currentMarkets,
-            handleTicker,
-            "매수 대기 시간 초과로 인한 종목 재선정(재연결)",
-          );
-          logger.info(
+        // lastSelectTime 선행 갱신: selectAndLoad가 429로 실패해도 매분 재시도 방지
+        lastSelectTime = Date.now();
+        try {
+          const next = await selectAndLoad();
+          if (next.length > 0) {
+            currentMarkets = next;
+            subscribeTicker(
+              currentMarkets,
+              handleTicker,
+              "매수 대기 시간 초과로 인한 종목 재선정(재연결)",
+            );
+            logger.info(
+              LOG_SOURCE,
+              "매수 없음 주기 경과, 종목 재선정: %s",
+              currentMarkets.join(", "),
+            );
+          }
+        } catch (e) {
+          logger.warn(
             LOG_SOURCE,
-            "매수 없음 주기 경과, 종목 재선정: %s",
-            currentMarkets.join(", "),
+            "주기 재선정 실패 (다음 주기에 재시도): %s",
+            (e as Error).message,
           );
         }
       }
     } catch (e) {
       logger.error(LOG_SOURCE, "주기 작업 오류: %s", (e as Error).message);
+    } finally {
+      isIntervalRunning = false;
     }
   }, CANDLE_REFRESH_INTERVAL_MS);
 
