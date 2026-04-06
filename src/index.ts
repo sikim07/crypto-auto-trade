@@ -50,6 +50,7 @@ import {
   STRATEGY_E_ENABLED,
   STRATEGY_F_ENABLED,
   STRATEGY_T1_ENABLED,
+  STRATEGY_T1_MARKET_POOL,
   CANDLE_WINDOW_SIZE_1H,
   STRATEGY_T1_TRAILING_ACTIVATE_PCT,
   STRATEGY_B_STOP_LOSS_PCT,
@@ -273,20 +274,34 @@ const run = async (): Promise<void> => {
       ]);
       setCandles(market, candles1m, 1);
       setCandles(market, candles5m, 5);
-      if (STRATEGY_T1_ENABLED) {
+    }
+    // T1 전용 풀 1h 캔들 사전 적재 (selectMarkets와 독립)
+    if (STRATEGY_T1_ENABLED) {
+      for (const market of STRATEGY_T1_MARKET_POOL) {
         try {
           const candles1h = await fetchCandles(market, CANDLE_WINDOW_SIZE_1H, "minutes60");
           setCandles1h(market, candles1h);
         } catch (e) {
-          logger.warn(LOG_SOURCE, "1h 캔들 사전 적재 실패 (%s): %s", market, (e as Error).message);
+          logger.warn(LOG_SOURCE, "T1풀 1h 캔들 사전 적재 실패 (%s): %s", market, (e as Error).message);
         }
       }
+      logger.info(LOG_SOURCE, "[T1풀] 1h 캔들 적재 완료: %s", STRATEGY_T1_MARKET_POOL.join(", "));
     }
     return markets;
   };
 
   currentMarkets = await selectAndLoad();
   if (currentMarkets.length === 0) process.exit(1);
+
+  /**
+   * WebSocket 구독 대상 = currentMarkets(A~F용) ∪ T1_MARKET_POOL(T1용).
+   * 포지션 보유 중(currentMarkets=[market])일 때는 T1 풀 추가 안 함.
+   * 새로운 포지션은 열 수 없으므로 T1 감시 불필요.
+   */
+  const getSubscribeMarkets = (): string[] => {
+    if (!STRATEGY_T1_ENABLED || currentMarkets.length === 1) return currentMarkets;
+    return [...new Set([...currentMarkets, ...STRATEGY_T1_MARKET_POOL])];
+  };
 
   /** 마지막 종목 선정 시각 (재선정 주기 판단용) */
   let lastSelectTime = Date.now();
@@ -339,12 +354,15 @@ const run = async (): Promise<void> => {
             (e as Error).message,
           );
         }
-        if (STRATEGY_T1_ENABLED) {
+      }
+      // T1 전용 풀 1h 캔들 주기 갱신 (selectMarkets와 독립)
+      if (STRATEGY_T1_ENABLED) {
+        for (const market of STRATEGY_T1_MARKET_POOL) {
           try {
             const candles1h = await fetchCandles(market, CANDLE_WINDOW_SIZE_1H, "minutes60");
             setCandles1h(market, candles1h);
           } catch (e) {
-            logger.warn(LOG_SOURCE, "1h 캔들 갱신 실패 (%s): %s", market, (e as Error).message);
+            logger.warn(LOG_SOURCE, "T1풀 1h 캔들 갱신 실패 (%s): %s", market, (e as Error).message);
           }
         }
       }
@@ -545,7 +563,7 @@ const run = async (): Promise<void> => {
                   }
                   lastSelectTime = Date.now();
                   subscribeTicker(
-                    currentMarkets,
+                    getSubscribeMarkets(),
                     handleTicker,
                     "손절 소급 체결로 인한 종목 재선정(재연결)",
                   );
@@ -604,7 +622,7 @@ const run = async (): Promise<void> => {
           if (next.length > 0) {
             currentMarkets = next;
             subscribeTicker(
-              currentMarkets,
+              getSubscribeMarkets(),
               handleTicker,
               "매수 대기 시간 초과로 인한 종목 재선정(재연결)",
             );
@@ -940,7 +958,7 @@ const run = async (): Promise<void> => {
               }
               lastSelectTime = Date.now();
               subscribeTicker(
-                currentMarkets,
+                getSubscribeMarkets(),
                 handleTicker,
                 "매도 체결로 인한 종목 재선정(재연결)",
               );
@@ -966,7 +984,9 @@ const run = async (): Promise<void> => {
         return;
       }
 
-      if (!currentMarkets.includes(market)) return;
+      const isCurrentMarket = currentMarkets.includes(market);
+      const isT1Market = STRATEGY_T1_ENABLED && STRATEGY_T1_MARKET_POOL.includes(market);
+      if (!isCurrentMarket && !isT1Market) return;
       if (isBuying) return;
 
       // [v3.6.20260317] 일일 손실 한도 + 잔여 여력 버퍼 이중 체크
@@ -1042,25 +1062,15 @@ const run = async (): Promise<void> => {
       //   로그에서 "(시작)/(종료)" 빈도를 보고 차단이 과도하면
       //   config.ts의 REGIME_BTC_MA_SLOW 값을 30~50으로 상향 조정.
       if (regime.bearTrend) {
-        const onlyT1Active =
-          STRATEGY_T1_ENABLED &&
-          !STRATEGY_A_ENABLED &&
-          !STRATEGY_B_ENABLED &&
-          !STRATEGY_C_ENABLED &&
-          !STRATEGY_D_ENABLED &&
-          !STRATEGY_E_ENABLED &&
-          !STRATEGY_F_ENABLED;
         if (!regimeBlockBearTrendActive) {
           regimeBlockBearTrendActive = true;
           regimeBlockBearTrendStartTime = Date.now();
           logger.debug(
             LOG_SOURCE,
-            onlyT1Active
-              ? "[레짐 차단] BTC MA 하락 추세 감지 (T1 전용 모드: 1h 자체 필터로 대체, 차단 제외)"
-              : "[레짐 차단] BTC MA 하락 추세, 전략 무관 매수 중단 (시작)",
+            "[레짐 차단] BTC MA 하락 추세, 전략 무관 매수 중단 (시작)",
           );
         }
-        if (!onlyT1Active) return;
+        return;
       } else if (regimeBlockBearTrendActive) {
         regimeBlockBearTrendActive = false;
         const bearTrendActiveDurationMs = Date.now() - regimeBlockBearTrendStartTime;
@@ -1091,7 +1101,7 @@ const run = async (): Promise<void> => {
             currentMarkets = nextMarkets;
             lastSelectTime = Date.now();
             subscribeTicker(
-              currentMarkets,
+              getSubscribeMarkets(),
               handleTicker,
               "레짐해제 종목 재선정(재연결)",
             );
@@ -1279,7 +1289,8 @@ const run = async (): Promise<void> => {
         buyC?.shouldBuy ||
         buyD?.shouldBuy ||
         buyE?.shouldBuy ||
-        !STRATEGY_T1_ENABLED
+        !STRATEGY_T1_ENABLED ||
+        !isT1Market
           ? null
           : checkBuySignalT1(market, price);
 
@@ -1287,6 +1298,11 @@ const run = async (): Promise<void> => {
       if (!buySignal?.shouldBuy) return;
       isBuying = true;
       const strategy = buySignal.strategy ?? undefined;
+      // T1 진입 시점 EMA20 추출 (손절 기준 고정용)
+      const t1Ema20AtBuy: number | undefined =
+        strategy === "T1" && buyT1 != null && "altEma20" in buyT1
+          ? (buyT1 as { altEma20: number }).altEma20
+          : undefined;
       try {
         logger.info(
           LOG_SOURCE,
@@ -1413,6 +1429,7 @@ const run = async (): Promise<void> => {
               strategy === "C" || strategy === "B" || strategy === "T1" ? price : undefined,
             trailingActivated:
               strategy === "C" || strategy === "B" || strategy === "T1" ? false : undefined,
+            ema20AtBuy: t1Ema20AtBuy,
           };
           logger.info(
             LOG_SOURCE,
@@ -1458,11 +1475,12 @@ const run = async (): Promise<void> => {
     }
   };
 
-  subscribeTicker(currentMarkets, handleTicker);
+  subscribeTicker(getSubscribeMarkets(), handleTicker);
   logger.info(
     LOG_SOURCE,
-    "봇 기동 완료. WebSocket 구독: %s",
+    "봇 기동 완료. WebSocket 구독(A~F): %s | T1풀: %s",
     currentMarkets.join(", "),
+    STRATEGY_T1_ENABLED ? STRATEGY_T1_MARKET_POOL.join(", ") : "비활성",
   );
 };
 

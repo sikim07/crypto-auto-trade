@@ -109,4 +109,6 @@ export interface BotPosition {
   highestPrice?: number;
   trailingActivated?: boolean;
   lastRsi?: number;
+  /** T1 전용: 진입 시점 Alt EMA20 고정값. 손절 기준선 고정에 사용. */
+  ema20AtBuy?: number;
 }

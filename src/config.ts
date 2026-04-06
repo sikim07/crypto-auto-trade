@@ -1128,6 +1128,21 @@ export const STRATEGY_T1_RSI_MAX = 65;
 export const STRATEGY_T1_BTC_RSI_MIN = 50;
 
 /**
+ * BTC RSI 상한. 이 값 초과 시 BTC 단기 과매수 → 조정 가능성 높아 진입 차단.
+ * 실전 MMT(77), BERA(77) 거래가 이 구간에서 진입 후 즉시 손절된 사례 기반.
+ * 튜닝 기준: 차단 빈도가 너무 높으면 75로 완화, 고점 진입 손절이 반복되면 65로 축소.
+ */
+export const STRATEGY_T1_BTC_RSI_MAX = 70;
+
+/**
+ * Alt EMA 스프레드 최소 기준(%). EMA20과 EMA50 간격이 이 값 미만이면 추세 불명확으로 진입 차단.
+ * (EMA20 - EMA50) / EMA50 × 100 >= 이 값이어야 진입 허용.
+ * 실전 BERA altEma(651≈651) 사례: 스프레드 0.X% → 골든크로스 직후 or 데드크로스 직전 불명확 구간.
+ * 튜닝 기준: 신호가 너무 줄면 0.5%로 완화, 추세 불명확 진입이 반복되면 2.0%로 강화.
+ */
+export const STRATEGY_T1_EMA_SPREAD_MIN_PCT = 1.0;
+
+/**
  * 눌림목 허용 범위(%). 현재가가 Alt EMA20 ~ EMA20×(1+PCT/100) 이내일 때 눌림목으로 판단.
  * 기본 1.0%: EMA20에 정확히 닿지 않아도 1% 이내 근접이면 진입 허용.
  * 튜닝 기준: 실전 기동 후 "[시그널] T1 매수" 로그 발생 빈도가 1일 1회 미만이면 1.5~2.0%로 완화.
@@ -1154,3 +1169,29 @@ export const STRATEGY_T1_EMA_LONG = 50;
  * 개선 방향: 거래량 조건이 신호를 과도하게 차단하면 10~15로 축소.
  */
 export const STRATEGY_T1_VOLUME_AVG_PERIOD = 20;
+
+/**
+ * T1 전략 전용 종목 풀.
+ *
+ * [배경]
+ *   기존 selectMarkets는 24h 상방 변동성(급등) 상위 종목을 선정.
+ *   T1은 "꾸준히 우상향 중인 종목이 EMA20까지 눌린 후 반등"을 노리는 전략인데,
+ *   급등 종목 풀에서 EMA20 눌림목이 오면 "급등 소화 중인 되돌림"일 가능성이 높음.
+ *   GAS, MMT, BERA 같은 소형 알트가 반복 선정 → EMA 눌림목이 아닌 하락 중에 진입.
+ *
+ * [목적]
+ *   시총 상위의 유동성 충분한 종목을 고정 풀로 지정.
+ *   selectMarkets와 완전히 독립 운영 — T1은 이 풀만 감시.
+ *
+ * [튜닝 기준]
+ *   신호 빈도가 너무 낮으면 SOL, AVAX 등 중형 알트 추가.
+ *   특정 종목이 반복 손절되면 해당 종목만 제거.
+ */
+export const STRATEGY_T1_MARKET_POOL: string[] = [
+  "KRW-BTC",
+  "KRW-ETH",
+  "KRW-SOL",
+  "KRW-XRP",
+  "KRW-ADA",
+  "KRW-AVAX",
+];
