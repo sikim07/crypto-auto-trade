@@ -233,8 +233,7 @@ export const DAILY_LOSS_BUFFER_PCT = 1.5;
  *   - E전략: 신호 발생 빈도가 극히 낮으므로 false 후 효과 관찰 권장
  * ──────────────────────────────────────────────────────────────
  */
-// 일시 비활성화
-export const STRATEGY_A_ENABLED = false;
+export const STRATEGY_A_ENABLED = true;
 // 일시 비활성화
 export const STRATEGY_B_ENABLED = false;
 // 일시 비활성화
@@ -278,8 +277,7 @@ export const STRATEGY_D_ENABLED = false;
  *   false로만 관리하고 코드는 절대 삭제하지 말 것.
  */
 export const STRATEGY_E_ENABLED = false; // 영구 비활성화 — 위 경고 참조
-// 일시 비활성화
-export const STRATEGY_F_ENABLED = false;
+export const STRATEGY_F_ENABLED = true;
 
 /** 전략 A: 저점 정밀 타격 — RSI 과매도 기준, 거래량 평균 봉 수 */
 /** 역추세 전략 A: 하락장 진입 차단 — 5분봉 MA5 < MA20 이면 매수 스킵 (횡보/상승에서만 동작) */
@@ -1068,7 +1066,7 @@ export const REGIME_BTC_MA_HYSTERESIS_BAND = 0.002;
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** T1 활성화 플래그. false면 T1 매수 신호 체크를 완전히 생략 (기존 스캘핑 모드 유지) */
-export const STRATEGY_T1_ENABLED = true;
+export const STRATEGY_T1_ENABLED = false;
 
 /** 1h 캔들 저장 최대 개수. EMA50 계산에 최소 50개 필요. 여유분 포함 200 */
 export const CANDLE_WINDOW_SIZE_1H = 200;
