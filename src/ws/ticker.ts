@@ -88,10 +88,24 @@ const connect = (
     } else {
       logger.warn(LOG_SOURCE, msg, ...args);
     }
-    ws = null;
+    // 구 소켓의 close 이벤트가 신 소켓 참조를 덮어쓰지 않도록 동일성 확인
+    if (ws === socket) {
+      ws = null;
+    }
     if (watchdogTimer) {
       clearTimeout(watchdogTimer);
       watchdogTimer = null;
+    }
+    // 비정상 종료(1006 등) 시 5초 후 자동 재연결
+    // — 정상 종료(1000)는 index.ts가 의도적으로 재연결하므로 제외
+    if (code !== 1000 && subscribedMarkets.length > 0 && onTicker) {
+      logger.info(LOG_SOURCE, "비정상 종료 감지 — 5초 후 자동 재연결");
+      setTimeout(() => {
+        // 재연결 대기 중에 index.ts가 이미 새 연결을 만들었으면 스킵
+        if (ws === null && subscribedMarkets.length > 0 && onTicker) {
+          connect(subscribedMarkets, onTicker);
+        }
+      }, 5000);
     }
   });
 };
