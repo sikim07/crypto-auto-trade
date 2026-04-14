@@ -131,7 +131,10 @@ export const checkBuySignalF = (
     const vwap5m = calcVwap(candles5m, STRATEGY_F_MIN_VWAP_CANDLES_5M);
     if (vwap5m === 0) return null;
     const lastClose5m = candles5m[candles5m.length - 1].trade_price;
-    if (lastClose5m <= vwap5m) return null;
+    if (lastClose5m <= vwap5m) {
+      logger.debug(LOG_SOURCE, "[BT][차단1] %s 5분봉 현재가 %s ≤ VWAP5m %s", market, lastClose5m.toFixed(0), vwap5m.toFixed(0));
+      return null;
+    }
 
     // closedCandles 처리 — 미완성 현재봉 제외
     const volumes1m = volumesFromCandles(candles1m);
@@ -146,10 +149,16 @@ export const checkBuySignalF = (
     // [조건 2] 1분봉 현재가 > VWAP_1m AND 현재가 > EMA21_1m
     const vwap1m = calcVwap(candles1m, STRATEGY_F_MIN_VWAP_CANDLES_1M);
     if (vwap1m === 0) return null;
-    if (currentPrice <= vwap1m) return null;
+    if (currentPrice <= vwap1m) {
+      logger.debug(LOG_SOURCE, "[BT][차단2a] %s 현재가 %s ≤ VWAP1m %s", market, currentPrice.toFixed(0), vwap1m.toFixed(0));
+      return null;
+    }
 
     const ema21 = calculateEMA(closedPrices, STRATEGY_F_EMA_PERIOD);
-    if (currentPrice <= ema21) return null;
+    if (currentPrice <= ema21) {
+      logger.debug(LOG_SOURCE, "[BT][차단2b] %s 현재가 %s ≤ EMA21 %s", market, currentPrice.toFixed(0), ema21.toFixed(0));
+      return null;
+    }
 
     // [v3.10.20260325] [조건 9] VWAP1m-EMA21 최대 괴리 제한
     // VWAP1m이 EMA21보다 VWAP_EMA_GAP_MAX_PCT 이상 낮으면 진입 차단.
@@ -182,21 +191,33 @@ export const checkBuySignalF = (
     // [조건 3] 현재가 ≤ max(VWAP_1m, EMA21) × (1 + PROXIMITY_PCT/100) — 눌림목 위치
     const anchor = Math.max(vwap1m, ema21);
     const proximityThreshold = anchor * (1 + STRATEGY_F_PROXIMITY_PCT / 100);
-    if (currentPrice > proximityThreshold) return null;
+    if (currentPrice > proximityThreshold) {
+      const abovePct = ((currentPrice - anchor) / anchor * 100).toFixed(2);
+      logger.debug(LOG_SOURCE, "[BT][차단3] %s 현재가 %s가 anchor(%s) 대비 +%s%% (허용 %s%%)", market, currentPrice.toFixed(0), anchor.toFixed(0), abovePct, String(STRATEGY_F_PROXIMITY_PCT));
+      return null;
+    }
 
     // [조건 4] RSI 크로스 (2차 수정: 38로 복원 — EMA21 터치 조건[조건 7]이 품질 필터 역할을 대신하므로)
     const rsiPrices = closedPrices.slice(-(RSI_PERIOD + 2));
     const rsiPrev = calculateRSI(rsiPrices.slice(0, -1));
     const rsiCur = calculateRSI(rsiPrices);
-    if (!(rsiPrev < STRATEGY_F_RSI_CROSS && rsiCur >= STRATEGY_F_RSI_CROSS))
+    if (!(rsiPrev < STRATEGY_F_RSI_CROSS && rsiCur >= STRATEGY_F_RSI_CROSS)) {
+      logger.debug(LOG_SOURCE, "[BT][차단4] %s RSI %s→%s (크로스 미발생, 기준 %s)", market, rsiPrev.toFixed(1), rsiCur.toFixed(1), String(STRATEGY_F_RSI_CROSS));
       return null;
+    }
 
     // [조건 5] 마감봉 양봉: close > open. 반등 당김 시 FIRST_GREEN_ONLY면 직전봉 음봉/도지일 때만(첫 반등 양봉만)
     const lastClosed = closedCandles[closedCandles.length - 1];
-    if (lastClosed.trade_price <= lastClosed.opening_price) return null;
+    if (lastClosed.trade_price <= lastClosed.opening_price) {
+      logger.debug(LOG_SOURCE, "[BT][차단5a] %s 마감봉 음봉/도지 close=%s open=%s", market, lastClosed.trade_price.toFixed(0), lastClosed.opening_price.toFixed(0));
+      return null;
+    }
     if (STRATEGY_F_FIRST_GREEN_ONLY && closedCandles.length >= 2) {
       const prevClosed = closedCandles[closedCandles.length - 2];
-      if (prevClosed.trade_price > prevClosed.opening_price) return null;
+      if (prevClosed.trade_price > prevClosed.opening_price) {
+        logger.debug(LOG_SOURCE, "[BT][차단5b] %s 직전봉도 양봉 (FIRST_GREEN_ONLY) prevClose=%s prevOpen=%s", market, prevClosed.trade_price.toFixed(0), prevClosed.opening_price.toFixed(0));
+        return null;
+      }
     }
 
     // [조건 6] 거래량 필터: 현재 거래량이 직전 N개 봉 평균 대비 최소 비율 이상일 때만 진입
@@ -210,7 +231,7 @@ export const checkBuySignalF = (
         STRATEGY_F_VOLUME_AVG_PERIOD,
       );
       if (volumeRatio < STRATEGY_F_VOLUME_RATIO_MIN) {
-        // 거래량 부족으로 진입 차단 (로그는 생략하여 노이즈 감소)
+        logger.debug(LOG_SOURCE, "[BT][차단6] %s 거래량 부족 ratio=%s (기준 %s)", market, volumeRatio.toFixed(2), String(STRATEGY_F_VOLUME_RATIO_MIN));
         return null;
       }
     }
@@ -231,7 +252,10 @@ export const checkBuySignalF = (
     const hasConfirmedBounce = touchCandleWindow.some(
       (c) => c.low_price <= emaUpperRef && c.trade_price >= ema21,
     );
-    if (!hasConfirmedBounce) return null;
+    if (!hasConfirmedBounce) {
+      logger.debug(LOG_SOURCE, "[BT][차단7] %s EMA21 터치 반등 없음 (최근 %s봉 내, ema21=%s, buffer=%s%%)", market, String(STRATEGY_F_EMA_TOUCH_WINDOW), ema21.toFixed(0), String(STRATEGY_F_EMA_TOUCH_BUFFER_PCT));
+      return null;
+    }
 
     // [v3.2.20260306] [조건 8] EMA21 기울기 필터
     // 목적: EMA21이 수평/하향인 박스권 상단에서의 반복 진입 차단.
@@ -251,7 +275,10 @@ export const checkBuySignalF = (
       }
       const emaSlope = linearRegressionSlope(emaHistory);
       emaSlopePct = ema21 > 0 ? (emaSlope / ema21) * 100 : 0;
-      if (emaSlopePct < STRATEGY_F_EMA_SLOPE_MIN_PCT) return null;
+      if (emaSlopePct < STRATEGY_F_EMA_SLOPE_MIN_PCT) {
+        logger.debug(LOG_SOURCE, "[BT][차단8] %s EMA21 기울기 부족 slope=%s%%/봉 (기준 %s%%)", market, emaSlopePct.toFixed(4), String(STRATEGY_F_EMA_SLOPE_MIN_PCT));
+        return null;
+      }
     }
 
     // 거래량 비율 계산 (로깅용)

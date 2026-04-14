@@ -233,7 +233,7 @@ export const DAILY_LOSS_BUFFER_PCT = 1.5;
  *   - E전략: 신호 발생 빈도가 극히 낮으므로 false 후 효과 관찰 권장
  * ──────────────────────────────────────────────────────────────
  */
-export const STRATEGY_A_ENABLED = true;
+export const STRATEGY_A_ENABLED = false;
 // 일시 비활성화
 export const STRATEGY_B_ENABLED = false;
 // 일시 비활성화
