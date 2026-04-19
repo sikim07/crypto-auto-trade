@@ -42,6 +42,19 @@ const LOG_SOURCE = "strategyF";
 const emaBreakSaveState = new Map<string, boolean>();
 /** VWAP-EMA 괴리 스킵 상태 (마켓별) — 전환 시점에만 로그 */
 const vwapEmaGapSkipState = new Map<string, boolean>();
+/** 차단 조건 상태 (마켓별) — 전환 시점에만 로그. 이전과 다른 차단 이유일 때만 로그 출력 */
+const blockReasonState = new Map<string, string>();
+
+/** 차단 상태 전환 체크. 이전과 다른 차단 key인 경우에만 logFn을 호출하고 null 반환 */
+const setBlock = (market: string, key: string, logFn: () => void): null => {
+  const prev = blockReasonState.get(market);
+  if (prev !== key) {
+    if (prev) logger.debug(LOG_SOURCE, "[BT][%s] %s 해제", prev, market);
+    logFn();
+    blockReasonState.set(market, key);
+  }
+  return null;
+};
 
 const KST_OFFSET_MS = 9 * 60 * 60 * 1000;
 
@@ -132,8 +145,9 @@ export const checkBuySignalF = (
     if (vwap5m === 0) return null;
     const lastClose5m = candles5m[candles5m.length - 1].trade_price;
     if (lastClose5m <= vwap5m) {
-      logger.debug(LOG_SOURCE, "[BT][차단1] %s 5분봉 현재가 %s ≤ VWAP5m %s", market, lastClose5m.toFixed(0), vwap5m.toFixed(0));
-      return null;
+      return setBlock(market, "차단1", () =>
+        logger.debug(LOG_SOURCE, "[BT][차단1] %s 시작 — 5분봉 %s ≤ VWAP5m %s", market, lastClose5m.toFixed(0), vwap5m.toFixed(0))
+      );
     }
 
     // closedCandles 처리 — 미완성 현재봉 제외
@@ -150,14 +164,16 @@ export const checkBuySignalF = (
     const vwap1m = calcVwap(candles1m, STRATEGY_F_MIN_VWAP_CANDLES_1M);
     if (vwap1m === 0) return null;
     if (currentPrice <= vwap1m) {
-      logger.debug(LOG_SOURCE, "[BT][차단2a] %s 현재가 %s ≤ VWAP1m %s", market, currentPrice.toFixed(0), vwap1m.toFixed(0));
-      return null;
+      return setBlock(market, "차단2a", () =>
+        logger.debug(LOG_SOURCE, "[BT][차단2a] %s 시작 — 현재가 %s ≤ VWAP1m %s", market, currentPrice.toFixed(0), vwap1m.toFixed(0))
+      );
     }
 
     const ema21 = calculateEMA(closedPrices, STRATEGY_F_EMA_PERIOD);
     if (currentPrice <= ema21) {
-      logger.debug(LOG_SOURCE, "[BT][차단2b] %s 현재가 %s ≤ EMA21 %s", market, currentPrice.toFixed(0), ema21.toFixed(0));
-      return null;
+      return setBlock(market, "차단2b", () =>
+        logger.debug(LOG_SOURCE, "[BT][차단2b] %s 시작 — 현재가 %s ≤ EMA21 %s", market, currentPrice.toFixed(0), ema21.toFixed(0))
+      );
     }
 
     // [v3.10.20260325] [조건 9] VWAP1m-EMA21 최대 괴리 제한
@@ -192,9 +208,10 @@ export const checkBuySignalF = (
     const anchor = Math.max(vwap1m, ema21);
     const proximityThreshold = anchor * (1 + STRATEGY_F_PROXIMITY_PCT / 100);
     if (currentPrice > proximityThreshold) {
-      const abovePct = ((currentPrice - anchor) / anchor * 100).toFixed(2);
-      logger.debug(LOG_SOURCE, "[BT][차단3] %s 현재가 %s가 anchor(%s) 대비 +%s%% (허용 %s%%)", market, currentPrice.toFixed(0), anchor.toFixed(0), abovePct, String(STRATEGY_F_PROXIMITY_PCT));
-      return null;
+      return setBlock(market, "차단3", () => {
+        const abovePct = ((currentPrice - anchor) / anchor * 100).toFixed(2);
+        logger.debug(LOG_SOURCE, "[BT][차단3] %s 시작 — 현재가 %s가 anchor(%s) 대비 +%s%% (허용 %s%%)", market, currentPrice.toFixed(0), anchor.toFixed(0), abovePct, String(STRATEGY_F_PROXIMITY_PCT));
+      });
     }
 
     // [조건 4] RSI 크로스 (2차 수정: 38로 복원 — EMA21 터치 조건[조건 7]이 품질 필터 역할을 대신하므로)
@@ -202,21 +219,24 @@ export const checkBuySignalF = (
     const rsiPrev = calculateRSI(rsiPrices.slice(0, -1));
     const rsiCur = calculateRSI(rsiPrices);
     if (!(rsiPrev < STRATEGY_F_RSI_CROSS && rsiCur >= STRATEGY_F_RSI_CROSS)) {
-      logger.debug(LOG_SOURCE, "[BT][차단4] %s RSI %s→%s (크로스 미발생, 기준 %s)", market, rsiPrev.toFixed(1), rsiCur.toFixed(1), String(STRATEGY_F_RSI_CROSS));
-      return null;
+      return setBlock(market, "차단4", () =>
+        logger.debug(LOG_SOURCE, "[BT][차단4] %s 시작 — RSI %s→%s (크로스 미발생, 기준 %s)", market, rsiPrev.toFixed(1), rsiCur.toFixed(1), String(STRATEGY_F_RSI_CROSS))
+      );
     }
 
     // [조건 5] 마감봉 양봉: close > open. 반등 당김 시 FIRST_GREEN_ONLY면 직전봉 음봉/도지일 때만(첫 반등 양봉만)
     const lastClosed = closedCandles[closedCandles.length - 1];
     if (lastClosed.trade_price <= lastClosed.opening_price) {
-      logger.debug(LOG_SOURCE, "[BT][차단5a] %s 마감봉 음봉/도지 close=%s open=%s", market, lastClosed.trade_price.toFixed(0), lastClosed.opening_price.toFixed(0));
-      return null;
+      return setBlock(market, "차단5a", () =>
+        logger.debug(LOG_SOURCE, "[BT][차단5a] %s 시작 — 마감봉 음봉/도지 close=%s open=%s", market, lastClosed.trade_price.toFixed(0), lastClosed.opening_price.toFixed(0))
+      );
     }
     if (STRATEGY_F_FIRST_GREEN_ONLY && closedCandles.length >= 2) {
       const prevClosed = closedCandles[closedCandles.length - 2];
       if (prevClosed.trade_price > prevClosed.opening_price) {
-        logger.debug(LOG_SOURCE, "[BT][차단5b] %s 직전봉도 양봉 (FIRST_GREEN_ONLY) prevClose=%s prevOpen=%s", market, prevClosed.trade_price.toFixed(0), prevClosed.opening_price.toFixed(0));
-        return null;
+        return setBlock(market, "차단5b", () =>
+          logger.debug(LOG_SOURCE, "[BT][차단5b] %s 시작 — 직전봉도 양봉 (FIRST_GREEN_ONLY) prevClose=%s prevOpen=%s", market, prevClosed.trade_price.toFixed(0), prevClosed.opening_price.toFixed(0))
+        );
       }
     }
 
@@ -231,8 +251,9 @@ export const checkBuySignalF = (
         STRATEGY_F_VOLUME_AVG_PERIOD,
       );
       if (volumeRatio < STRATEGY_F_VOLUME_RATIO_MIN) {
-        logger.debug(LOG_SOURCE, "[BT][차단6] %s 거래량 부족 ratio=%s (기준 %s)", market, volumeRatio.toFixed(2), String(STRATEGY_F_VOLUME_RATIO_MIN));
-        return null;
+        return setBlock(market, "차단6", () =>
+          logger.debug(LOG_SOURCE, "[BT][차단6] %s 시작 — 거래량 부족 ratio=%s (기준 %s)", market, volumeRatio.toFixed(2), String(STRATEGY_F_VOLUME_RATIO_MIN))
+        );
       }
     }
 
@@ -253,8 +274,9 @@ export const checkBuySignalF = (
       (c) => c.low_price <= emaUpperRef && c.trade_price >= ema21,
     );
     if (!hasConfirmedBounce) {
-      logger.debug(LOG_SOURCE, "[BT][차단7] %s EMA21 터치 반등 없음 (최근 %s봉 내, ema21=%s, buffer=%s%%)", market, String(STRATEGY_F_EMA_TOUCH_WINDOW), ema21.toFixed(0), String(STRATEGY_F_EMA_TOUCH_BUFFER_PCT));
-      return null;
+      return setBlock(market, "차단7", () =>
+        logger.debug(LOG_SOURCE, "[BT][차단7] %s 시작 — EMA21 터치 반등 없음 (최근 %s봉 내, ema21=%s, buffer=%s%%)", market, String(STRATEGY_F_EMA_TOUCH_WINDOW), ema21.toFixed(0), String(STRATEGY_F_EMA_TOUCH_BUFFER_PCT))
+      );
     }
 
     // [v3.2.20260306] [조건 8] EMA21 기울기 필터
@@ -276,8 +298,9 @@ export const checkBuySignalF = (
       const emaSlope = linearRegressionSlope(emaHistory);
       emaSlopePct = ema21 > 0 ? (emaSlope / ema21) * 100 : 0;
       if (emaSlopePct < STRATEGY_F_EMA_SLOPE_MIN_PCT) {
-        logger.debug(LOG_SOURCE, "[BT][차단8] %s EMA21 기울기 부족 slope=%s%%/봉 (기준 %s%%)", market, emaSlopePct.toFixed(4), String(STRATEGY_F_EMA_SLOPE_MIN_PCT));
-        return null;
+        return setBlock(market, "차단8", () =>
+          logger.debug(LOG_SOURCE, "[BT][차단8] %s 시작 — EMA21 기울기 부족 slope=%s%%/봉 (기준 %s%%)", market, emaSlopePct.toFixed(4), String(STRATEGY_F_EMA_SLOPE_MIN_PCT))
+        );
       }
     }
 
@@ -290,6 +313,13 @@ export const checkBuySignalF = (
         volumes1m,
         STRATEGY_F_VOLUME_AVG_PERIOD,
       );
+    }
+
+    // 차단 상태 해제
+    const prevBlock = blockReasonState.get(market);
+    if (prevBlock) {
+      logger.debug(LOG_SOURCE, "[BT][%s] %s 해제 — 매수 신호 발생", prevBlock, market);
+      blockReasonState.delete(market);
     }
 
     logger.info(

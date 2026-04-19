@@ -1024,7 +1024,7 @@ const run = async (): Promise<void> => {
       if (regime.crashing) {
         if (!regimeBlockCrashingActive) {
           regimeBlockCrashingActive = true;
-          logger.warn(
+          logger.info(
             LOG_SOURCE,
             "[레짐 차단] BTC 급락/쿨다운 중, 전략 무관 매수 중단 (시작)",
           );
@@ -1033,12 +1033,12 @@ const run = async (): Promise<void> => {
       }
       if (regimeBlockCrashingActive) {
         regimeBlockCrashingActive = false;
-        logger.warn(LOG_SOURCE, "[레짐 차단] BTC 급락/쿨다운 해제 (종료)");
+        logger.info(LOG_SOURCE, "[레짐 차단] BTC 급락/쿨다운 해제 (종료)");
       }
       if (regime.panicVolume) {
         if (!regimeBlockPanicVolumeActive) {
           regimeBlockPanicVolumeActive = true;
-          logger.warn(
+          logger.info(
             LOG_SOURCE,
             "[레짐 차단] BTC 패닉 볼륨 감지, 전략 무관 매수 중단 (시작)",
           );
@@ -1047,7 +1047,7 @@ const run = async (): Promise<void> => {
       }
       if (regimeBlockPanicVolumeActive) {
         regimeBlockPanicVolumeActive = false;
-        logger.warn(LOG_SOURCE, "[레짐 차단] BTC 패닉 볼륨 해제 (종료)");
+        logger.info(LOG_SOURCE, "[레짐 차단] BTC 패닉 볼륨 해제 (종료)");
       }
       // ── BTC MA 하락 추세 차단 ──────────────────────────────────────
       // [수정 이유] BTC 5분봉 MA5 < MA20이면 전체 매수 중단.
