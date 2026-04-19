@@ -3,7 +3,6 @@ import {
   calculateRSI,
   calculateEMA,
   getVolumeRatio,
-  linearRegressionSlope,
 } from "../indicators";
 import {
   RSI_PERIOD,
@@ -24,10 +23,6 @@ import {
   STRATEGY_F_VOLUME_AVG_PERIOD,
   STRATEGY_F_TRAILING_TIGHTEN_THRESHOLD,
   STRATEGY_F_TRAILING_TIGHTEN_OFFSET,
-  STRATEGY_F_EMA_TOUCH_WINDOW,
-  STRATEGY_F_EMA_TOUCH_BUFFER_PCT,
-  STRATEGY_F_EMA_SLOPE_LOOKBACK,
-  STRATEGY_F_EMA_SLOPE_MIN_PCT,
   STRATEGY_F_VWAP_EMA_GAP_MAX_PCT,
   STRATEGY_F_EMA_BREAK_BUFFER_PCT,
   STRATEGY_F_EMA_BREAK_GRACE_MIN,
@@ -120,6 +115,17 @@ const calcVwap = (candles: UpbitCandle[], minCandles: number): number => {
  *   - RSI 38 복원 후 진입이탈 손절 빈도 변화 (38 단독 시절 대비 개선 여부).
  *   - 트레일링 타이트닝 1.0% 기준에서 조기 청산 vs 수익 보존 균형.
  *   - [BT] 로그 emaSlopePct 분포 확인 후 SLOPE_MIN_PCT 조정 (과소 신호 시 하향, 수평 진입 반복 시 상향).
+ *
+ * [v3.11.20260420] [3차 수정] [조건 7][조건 8] 제거:
+ *   (A) [조건 7] EMA21 확정 지지 조건 제거:
+ *       터치 확인 윈도우(5봉=5분)가 너무 짧아, 눌림목 발생 후 5분만 경과해도
+ *       [조건 3](PROXIMITY 0.5%)과 동시 충족이 불가능한 구조적 상충 발생.
+ *       조건 3이 이미 "EMA21 근처(0.5% 이내)"를 요구하므로 EMA21 터치 확인은
+ *       중복 필터. RSI 38 크로스(조건 4) 자체가 반등 시작 확인 역할을 하므로 제거.
+ *   (B) [조건 8] EMA21 기울기 필터 제거:
+ *       SLOPE_MIN_PCT=0.01%/봉 임계값이 너무 낮아 실질 차단 효과 거의 없음.
+ *       조건 7이 없어진 상황에서 단독으로 남으면 신호 빈도 감소 부작용만 발생.
+ *       수평 박스권 진입 방지 목적은 조건 3(PROXIMITY)과 조건 4(RSI 크로스)가 커버.
  */
 export const checkBuySignalF = (
   market: string,
@@ -257,52 +263,7 @@ export const checkBuySignalF = (
       }
     }
 
-    // [조건 7] EMA21 확정 지지 확인 (2차 수정 신규)
-    // 목적: "EMA21 위에 있다"가 아닌 "EMA21에서 실제로 반등했다"를 확인.
-    //       가짜 지지선(플로팅)에 진입하는 허수 반등 차단.
-    // 로직: 직전 TOUCH_WINDOW개 마감봉 중, 저가(low_price)가
-    //       EMA21 × (1 + TOUCH_BUFFER_PCT/100) 이하이고
-    //       종가(trade_price)가 EMA21 이상인 봉이 1개 이상 존재해야 통과.
-    // 버퍼 이유: 현재봉 기준 EMA21과 과거봉 시점의 실제 EMA21 사이
-    //           미세 차이를 흡수하기 위한 허용 범위.
-    const emaUpperRef = ema21 * (1 + STRATEGY_F_EMA_TOUCH_BUFFER_PCT / 100);
-    const touchCandleWindow = closedCandles.slice(
-      -(STRATEGY_F_EMA_TOUCH_WINDOW + 1),
-      -1,
-    );
-    const hasConfirmedBounce = touchCandleWindow.some(
-      (c) => c.low_price <= emaUpperRef && c.trade_price >= ema21,
-    );
-    if (!hasConfirmedBounce) {
-      return setBlock(market, "차단7", () =>
-        logger.debug(LOG_SOURCE, "[BT][차단7] %s 시작 — EMA21 터치 반등 없음 (최근 %s봉 내, ema21=%s, buffer=%s%%)", market, String(STRATEGY_F_EMA_TOUCH_WINDOW), ema21.toFixed(0), String(STRATEGY_F_EMA_TOUCH_BUFFER_PCT))
-      );
-    }
-
-    // [v3.2.20260306] [조건 8] EMA21 기울기 필터
-    // 목적: EMA21이 수평/하향인 박스권 상단에서의 반복 진입 차단.
-    //       EMA21이 상승 중일 때만 진입해 "눌림목 반등" 조건 실질화.
-    // 로직: 직전 SLOPE_LOOKBACK+1개 봉의 EMA21 값으로 선형회귀 기울기 산출.
-    //       기울기를 EMA21 현재값으로 정규화(봉당 %) → 최소 상승률 미만이면 차단.
-    // 사례: KITE 3회 연속 진입 시 EMA21=456 수평 → 기울기≈0 → 차단 대상
-    //       (02:31 시간초과 -0.25%, 02:58 시간초과 -0.25%)
-    // 조건 7과의 차이: 조건 7=지지 확인(저가 터치 후 회복), 조건 8=방향 확인(EMA 상승 중)
-    let emaSlopePct = 0;
-    const minForSlope = STRATEGY_F_EMA_PERIOD + STRATEGY_F_EMA_SLOPE_LOOKBACK;
-    if (closedPrices.length >= minForSlope) {
-      const emaHistory: number[] = [];
-      for (let i = STRATEGY_F_EMA_SLOPE_LOOKBACK; i >= 0; i--) {
-        const slice = closedPrices.slice(0, closedPrices.length - i);
-        emaHistory.push(calculateEMA(slice, STRATEGY_F_EMA_PERIOD));
-      }
-      const emaSlope = linearRegressionSlope(emaHistory);
-      emaSlopePct = ema21 > 0 ? (emaSlope / ema21) * 100 : 0;
-      if (emaSlopePct < STRATEGY_F_EMA_SLOPE_MIN_PCT) {
-        return setBlock(market, "차단8", () =>
-          logger.debug(LOG_SOURCE, "[BT][차단8] %s 시작 — EMA21 기울기 부족 slope=%s%%/봉 (기준 %s%%)", market, emaSlopePct.toFixed(4), String(STRATEGY_F_EMA_SLOPE_MIN_PCT))
-        );
-      }
-    }
+    // [v3.11.20260420] 조건 7(EMA21 터치 반등), 조건 8(EMA21 기울기) 제거 — 함수 상단 주석 참조
 
     // 거래량 비율 계산 (로깅용)
     let volumeRatio = 0;
@@ -324,27 +285,24 @@ export const checkBuySignalF = (
 
     logger.info(
       LOG_SOURCE,
-      "[시그널] %s | 매수 조건 충족 | 가격 %s | VWAP1m %s | EMA21 %s | EMA기울기 %s%%/봉 | RSI %s→%s | 거래량비율 %s",
+      "[시그널] %s | 매수 조건 충족 | 가격 %s | VWAP1m %s | EMA21 %s | RSI %s→%s | 거래량비율 %s",
       market,
       currentPrice.toFixed(0),
       vwap1m.toFixed(0),
       ema21.toFixed(0),
-      emaSlopePct.toFixed(4),
       rsiPrev.toFixed(1),
       rsiCur.toFixed(1),
       volumeRatio.toFixed(2),
     );
     logger.info(
       LOG_SOURCE,
-      "[BT] F 매수 vwap1m=%s ema21=%s emaSlopePct=%s RSI=%s→%s proximityPct=%s volRatio=%s emaTouch=%s price=%s",
+      "[BT] F 매수 vwap1m=%s ema21=%s RSI=%s→%s proximityPct=%s volRatio=%s price=%s",
       vwap1m.toFixed(0),
       ema21.toFixed(4),
-      emaSlopePct.toFixed(4),
       rsiPrev.toFixed(1),
       rsiCur.toFixed(1),
       String(STRATEGY_F_PROXIMITY_PCT),
       volumeRatio.toFixed(2),
-      hasConfirmedBounce ? "Y" : "N",
       currentPrice.toFixed(0),
     );
     return {
