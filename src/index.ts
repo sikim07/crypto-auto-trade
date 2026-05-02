@@ -19,6 +19,8 @@ import { checkBuySignalF, checkSellSignalF } from "./strategy/strategyF";
 import {
   executeMarketBuy,
   executeMarketSell,
+  fetchVolume,
+  fetchAvgBuyPrice,
 } from "./execution/order";
 import { calculateATR } from "./indicators";
 import {
@@ -35,7 +37,6 @@ import {
   STRATEGY_C_TRAILING_ACTIVATE_PCT,
   STRATEGY_C_LOSS_COOLDOWN_MS,
   STRATEGY_D_LOSS_COOLDOWN_MS,
-  STRATEGY_D_MAX_DAILY_LOSS_COUNT,
   STRATEGY_F_COOLDOWN_MS,
   STRATEGY_F_LOSS_COOLDOWN_MS,
   STRATEGY_A_ENABLED,
@@ -101,12 +102,6 @@ const strategyCLossCooldownLastLog: Record<string, number> = {};
 const lossCooldown: Record<string, number> = {};
 /** 전략 D 쿨다운 차단 로그 쓰로틀 (종목별 마지막 로그 시각) */
 const lossCooldownLastLog: Record<string, number> = {};
-/**
- * 전략 D 당일 종목별 누적 손절 횟수
- * 일일 카운터 초기화(09:00 KST) 시 lossCooldown과 함께 초기화.
- * STRATEGY_D_MAX_DAILY_LOSS_COUNT 이상이면 당일 재진입 금지.
- */
-const strategyDLossCount: Record<string, number> = {};
 /** 전략 F 매도 종목 쿨다운 (종목별 F 매도 시각) */
 const strategyFCooldown: Record<string, number> = {};
 /** 전략 F 쿨다운 차단 로그 쓰로틀 (종목별 마지막 로그 시각) */
@@ -165,9 +160,6 @@ const resetDailyLossIfNewDay = (): void => {
     // 새 날짜 시작 시 전일 손절 횟수·쿨다운 모두 리셋 → 종목에 대해 당일 제한 없이 재시작.
     for (const k of Object.keys(strategyBLossCount)) delete strategyBLossCount[k];
     for (const k of Object.keys(strategyBLossCooldown)) delete strategyBLossCooldown[k];
-    // 전략 D 당일 손절 카운터 및 쿨다운 초기화
-    for (const k of Object.keys(strategyDLossCount)) delete strategyDLossCount[k];
-    for (const k of Object.keys(lossCooldown)) delete lossCooldown[k];
     logger.info(LOG_SOURCE, "일일 카운터 초기화 (새 날짜: %s)", today);
   }
 };
@@ -522,20 +514,11 @@ const run = async (): Promise<void> => {
               // 전략 D 손실 종목 쿨다운 등록
               if (strategyTag === "D" && finalNetPct < 0) {
                 lossCooldown[position.market] = Date.now();
-                strategyDLossCount[position.market] =
-                  (strategyDLossCount[position.market] ?? 0) + 1;
-                const dCount = strategyDLossCount[position.market]!;
-                const isDDailyBlocked =
-                  dCount >= STRATEGY_D_MAX_DAILY_LOSS_COUNT;
                 logger.info(
                   LOG_SOURCE,
-                  "[쿨다운] 전략D 손실 종목 등록: %s (순수익 %s%%, 누적 %s회 → %s)",
+                  "[쿨다운] 전략D 손실 종목 등록: %s (순수익 %s%%)",
                   position.market,
                   finalNetPct.toFixed(2),
-                  String(dCount),
-                  isDDailyBlocked
-                    ? "당일 진입 금지"
-                    : `다음쿨다운 ${STRATEGY_D_LOSS_COOLDOWN_MS / 60_000}분`,
                 );
               }
               // 전략 F 쿨다운 등록 [2차 수정]
@@ -772,56 +755,17 @@ const run = async (): Promise<void> => {
       // [수정 이유] 6개 전략이 동시 운용되며 같은 종목에 중복 진입하는 문제.
       //   (KAVA에 전략 D·F 동일 종목 동일 날 4회 진입 등)
       //   각 전략에 ENABLED 플래그를 추가해 코드 수정 없이 즉시 비활성화 가능.
-      // [우선순위] F → A → B → C → D → E 순으로 하나만 진입.
+      // [우선순위] B → A → C → D → E → F 순으로 하나만 진입.
       //   앞 전략이 신호를 내면 뒤 전략은 체크 생략 (단기 스캘핑에서 중복 포지션 방지).
       // [앞으로 확인할 것]
       //   - 성과가 좋은 전략만 남기고 나머지는 false로 전환
       //   - false로 바꿔도 이미 진입한 포지션의 매도 로직에는 영향 없음
-      //   - 전략 우선순위 변경 이유(v3.8): F가 로그상 유일하게 꾸준히 양수 수익을 기록.
-      //     F를 1순위로 올려 B/C/D 신호와 겹칠 때 F가 우선 진입하도록 변경.
-      //     추후 백데이터로 F 자체 우위인지, B/C/D 타이밍을 뒤집어쓴 효과인지 검증 필요.
-
-      // 전략 F 쿨다운 체크 후 F 매수 신호 검사 (1순위)
-      // [2차 수정] 이중 쿨다운 체크
-      // - winCooldown: 수익/손실 무관 5분 (빠른 재진입 허용)
-      // - lossCooldown: 손실 후 15분 (반복 손실 방지)
-      // 손실 매도 시 두 쿨다운이 모두 등록되므로 15분이 사실상 우선 적용됨
-      let buyF: ReturnType<typeof checkBuySignalF> = null;
-      if (STRATEGY_F_ENABLED) {
-        const fWinCooldownTime = strategyFCooldown[market];
-        const fLossCooldownTime = strategyFLossCooldown[market];
-        const winBlocked =
-          !!fWinCooldownTime &&
-          Date.now() - fWinCooldownTime < STRATEGY_F_COOLDOWN_MS;
-        const lossBlocked =
-          !!fLossCooldownTime &&
-          Date.now() - fLossCooldownTime < STRATEGY_F_LOSS_COOLDOWN_MS;
-
-        if (winBlocked || lossBlocked) {
-          // 쿨다운 중 — 진입 차단 (만료 시 아래 else에서 로그)
-        } else {
-          // 만료된 쿨다운 맵에서 정리
-          if (fWinCooldownTime) {
-            delete strategyFCooldown[market];
-            delete strategyFCooldownLastLog[market];
-          }
-          if (fLossCooldownTime) {
-            delete strategyFLossCooldown[market];
-          }
-          buyF = checkBuySignalF(market, price);
-        }
-      }
-
-      const buyA =
-        buyF?.shouldBuy || !STRATEGY_A_ENABLED
-          ? null
-          : checkBuySignalA(market, price);
-
+      //   - 전략 우선순위(B가 1순위)가 현재 매매 패턴에 적합한지 주기적 재검토
       // [v3.6.20260317] 전략 B 쿨다운 체크 — 손실 매도 후 재진입 차단
       // [v3.7.20260318] 단계별 쿨다운: 1회(10분) → 2회(60분) → 3회+(당일 금지)
       // 만료 시 "[BT] B 쿨다운 만료" 로그에 횟수 포함 → 어느 단계 쿨다운이 만료됐는지 추적.
       let buyB = null;
-      if (STRATEGY_B_ENABLED && !(buyF?.shouldBuy || buyA?.shouldBuy)) {
+      if (STRATEGY_B_ENABLED) {
         const bCooldownTime = strategyBLossCooldown[market];
         const bLossCount = strategyBLossCount[market] ?? 0;
         // 당일 진입 금지 체크 (3회 이상 손절)
@@ -853,13 +797,14 @@ const run = async (): Promise<void> => {
           buyB = checkBuySignalB(market, price);
         }
       }
+      const buyA =
+        buyB?.shouldBuy || !STRATEGY_A_ENABLED
+          ? null
+          : checkBuySignalA(market, price);
 
       // [v3.5.20260315] 전략 C 쿨다운 체크 — 손실 매도 후 30분 재진입 차단
       let buyC = null;
-      if (
-        STRATEGY_C_ENABLED &&
-        !(buyF?.shouldBuy || buyA?.shouldBuy || buyB?.shouldBuy)
-      ) {
+      if (STRATEGY_C_ENABLED && !(buyB?.shouldBuy || buyA?.shouldBuy)) {
         const cCooldownTime = strategyCLossCooldown[market];
         if (
           cCooldownTime &&
@@ -881,43 +826,19 @@ const run = async (): Promise<void> => {
       }
 
       // 전략 D 쿨다운 체크
-      // [v3.11] 당일 손절 횟수 기반 블랙리스트 추가 — 전략 B 패턴과 동일.
-      //   STRATEGY_D_MAX_DAILY_LOSS_COUNT(2회) 이상 손절 시 당일 재진입 금지.
       let buyD = null;
       if (
         STRATEGY_D_ENABLED &&
-        !(buyF?.shouldBuy || buyA?.shouldBuy || buyB?.shouldBuy || buyC?.shouldBuy)
+        !(buyB?.shouldBuy || buyA?.shouldBuy || buyC?.shouldBuy)
       ) {
-        const dLossCount = strategyDLossCount[market] ?? 0;
-        const isDDailyBlocked = dLossCount >= STRATEGY_D_MAX_DAILY_LOSS_COUNT;
         const cooldownTime = lossCooldown[market];
-        const isCooldownActive =
-          !isDDailyBlocked &&
-          !!cooldownTime &&
-          Date.now() - cooldownTime < STRATEGY_D_LOSS_COOLDOWN_MS;
-        if (isDDailyBlocked || isCooldownActive) {
-          // 당일 금지 또는 쿨다운 중 — 전환 시점에만 1회 로그 (매 틱 스팸 방지)
-          const lastLog = lossCooldownLastLog[market] ?? 0;
-          if (Date.now() - lastLog > 60_000) {
-            lossCooldownLastLog[market] = Date.now();
-            logger.info(
-              LOG_SOURCE,
-              "[BT] D 매수 스킵 %s: %s (누적손절 %s회)",
-              isDDailyBlocked ? "당일진입금지" : "쿨다운",
-              market,
-              String(dLossCount),
-            );
-          }
+        if (
+          cooldownTime &&
+          Date.now() - cooldownTime < STRATEGY_D_LOSS_COOLDOWN_MS
+        ) {
         } else {
-          // 쿨다운 만료 시 재진입 허용 — 만료 시점 1회 로그
+          // 쿨다운 만료된 경우 맵에서 제거
           if (cooldownTime) {
-            logger.info(
-              LOG_SOURCE,
-              "[BT] D 쿨다운 만료 재진입 허용: %s (누적손절 %s회, %s분 경과)",
-              market,
-              String(dLossCount),
-              Math.floor((Date.now() - cooldownTime) / 60_000).toFixed(0),
-            );
             delete lossCooldown[market];
             delete lossCooldownLastLog[market];
           }
@@ -925,16 +846,51 @@ const run = async (): Promise<void> => {
         }
       }
       const buyE =
-        buyF?.shouldBuy ||
-        buyA?.shouldBuy ||
         buyB?.shouldBuy ||
+        buyA?.shouldBuy ||
         buyC?.shouldBuy ||
         buyD?.shouldBuy ||
         !STRATEGY_E_ENABLED
           ? null
           : checkBuySignalE(market, price);
+      // 전략 F 쿨다운 체크 후 F 매수 신호 검사
+      let buyF: ReturnType<typeof checkBuySignalF> = null;
+      if (
+        STRATEGY_F_ENABLED &&
+        !buyB?.shouldBuy &&
+        !buyA?.shouldBuy &&
+        !buyC?.shouldBuy &&
+        !buyD?.shouldBuy &&
+        !buyE?.shouldBuy
+      ) {
+        // [2차 수정] 이중 쿨다운 체크
+        // - winCooldown: 수익/손실 무관 5분 (빠른 재진입 허용)
+        // - lossCooldown: 손실 후 15분 (반복 손실 방지)
+        // 손실 매도 시 두 쿨다운이 모두 등록되므로 15분이 사실상 우선 적용됨
+        const fWinCooldownTime = strategyFCooldown[market];
+        const fLossCooldownTime = strategyFLossCooldown[market];
+        const winBlocked =
+          !!fWinCooldownTime &&
+          Date.now() - fWinCooldownTime < STRATEGY_F_COOLDOWN_MS;
+        const lossBlocked =
+          !!fLossCooldownTime &&
+          Date.now() - fLossCooldownTime < STRATEGY_F_LOSS_COOLDOWN_MS;
 
-      const buySignal = buyF ?? buyA ?? buyB ?? buyC ?? buyD ?? buyE;
+        if (winBlocked || lossBlocked) {
+          // 쿨다운 중 — 진입 차단 (만료 시 아래 else에서 로그)
+        } else {
+          // 만료된 쿨다운 맵에서 정리
+          if (fWinCooldownTime) {
+            delete strategyFCooldown[market];
+            delete strategyFCooldownLastLog[market];
+          }
+          if (fLossCooldownTime) {
+            delete strategyFLossCooldown[market];
+          }
+          buyF = checkBuySignalF(market, price);
+        }
+      }
+      const buySignal = buyB ?? buyA ?? buyC ?? buyD ?? buyE ?? buyF;
       if (!buySignal?.shouldBuy) return;
       isBuying = true;
       const strategy = buySignal.strategy ?? undefined;
@@ -947,15 +903,44 @@ const run = async (): Promise<void> => {
           price.toFixed(0),
         );
         const res = await executeMarketBuy(ACCESS_KEY, SECRET_KEY, market);
-        if (res.ok) {
-          // confirmOrderWithRetry에서 이미 계좌 변경을 확인하고 volume/avgBuyPrice를 반환.
-          // 별도 fetchVolume/fetchAvgBuyPrice 재조회 불필요.
-          const vol = res.executedVolume ?? "0";
-          const avgBuyPrice = res.avgBuyPrice ?? 0;
+        if (res.ok && res.order) {
+          /**
+           * ──────────────────────────────────────────────────────────────
+           * [v3.5.20260315] 매수 후 수량 0 포지션 잠금 방지
+           *
+           * [수정 이유]
+           *   기존 코드: fetchVolume 2회 재조회 후 여전히 0이어도 경고 로그만 찍고
+           *   volume="0" 상태로 포지션을 생성. 이후 매도 신호 발생 시
+           *   executeMarketSell(volume:"0") → order.ts에서 "매도 수량 0" 반환(ok:false) →
+           *   오류 로그만 출력하고 포지션 유지 → 다음 틱에서 동일 반복 → 영구 잠금.
+           *   봇 재기동 없이는 해제 불가 (실제 코인은 계좌에 있으나 매도 불가 상태).
+           *
+           * [변경 내용]
+           *   1. 재조회 1차(300ms), 2차(1000ms): 총 3회 시도로 확장
+           *      (업비트 API 반영 지연이 최대 1~2초 수준인 점을 감안)
+           *   2. 3회 후에도 0이면 → error 로그 + return으로 포지션 생성 자체를 중단
+           *      (코인은 계좌에 존재하므로 수동 매도 필요 — 로그에 안내 포함)
+           *
+           * [주의]
+           *   이 return은 finally { isBuying = false } 를 거쳐 정상 종료됨.
+           *   포지션이 생성되지 않으므로 다음 매수 신호는 정상적으로 처리됨.
+           *   단, 실제로 매수된 코인이 계좌에 있으므로 Upbit 앱에서 수동 매도 필요.
+           *
+           * [앞으로 확인할 것]
+           *   - "[매수] ... 수량 확인 실패" error 로그 빈도 모니터링.
+           *   - 로그가 자주 발생하면 대기 시간을 추가하거나 재조회 횟수 증가 검토.
+           * ──────────────────────────────────────────────────────────────
+           */
+          let vol = await fetchVolume(ACCESS_KEY, SECRET_KEY, market);
           if (parseFloat(vol) <= 0) {
-            const failLog = `${tradeLogTimestamp()} [매매기록] 매수체결-수량미확인 | 전략${strategy ?? "legacy"} | ${market} | ${price.toFixed(0)} 원 | 수량 미확인 — Upbit 앱에서 수동 매도 필요`;
-            console.error(failLog);
-            writeTradeLog(failLog);
+            await sleep(300);
+            vol = await fetchVolume(ACCESS_KEY, SECRET_KEY, market);
+          }
+          if (parseFloat(vol) <= 0) {
+            await sleep(1000);
+            vol = await fetchVolume(ACCESS_KEY, SECRET_KEY, market);
+          }
+          if (parseFloat(vol) <= 0) {
             logger.error(
               LOG_SOURCE,
               "[매수] [전략%s] 체결 후 보유 수량 확인 실패: %s — 포지션 미등록. Upbit 앱에서 수동 매도 필요.",
@@ -964,8 +949,14 @@ const run = async (): Promise<void> => {
             );
             return;
           }
+          const avgBuyPrice = await fetchAvgBuyPrice(
+            ACCESS_KEY,
+            SECRET_KEY,
+            market,
+          );
           // avgBuyPrice 신뢰성 검증: 신호가 대비 10% 초과 괴리는 이전 세션 잔량 혼입으로
-          // 판단해 신호가를 사용.
+          // 판단해 신호가를 사용. (예: 이전 세션에서 838원에 산 FLOW가 계좌에 잔존하면
+          // avg_buy_price가 838로 반환되어 손절 오트리거 및 P&L 오염 발생)
           const AVG_PRICE_SANITY_PCT = 10;
           const isSane =
             avgBuyPrice > 0 &&

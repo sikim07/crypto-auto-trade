@@ -6,7 +6,6 @@ import {
   STRATEGY_D_RSI_MAX,
   STRATEGY_D_RSI_MIN_CROSS_STRENGTH,
   STRATEGY_D_VOLUME_RATIO,
-  STRATEGY_D_VOLUME_RATIO_MAX,
   STRATEGY_D_VOLUME_AVG_PERIOD,
   STRATEGY_D_DISPLACEMENT_MAX,
   STRATEGY_D_DISPLACEMENT_MIN,
@@ -27,38 +26,6 @@ import { logVolumeSkipTransition } from "./volumeSkipState";
 const LOG_SOURCE = "strategyD";
 const pricesFromCandles = (candles: { trade_price: number }[]): number[] =>
   candles.map((c) => c.trade_price);
-
-/** 거래량 상한 초과 스킵 상태 (마켓별) — 전환 시점에만 로그 */
-const volMaxSkipStateByMarket = new Map<string, boolean>();
-
-function logVolMaxSkipTransition(
-  market: string,
-  isSkipping: boolean,
-  volRatio: number,
-): void {
-  const wasSkipping = volMaxSkipStateByMarket.get(market) ?? false;
-  if (isSkipping) {
-    if (!wasSkipping) {
-      logger.info(
-        LOG_SOURCE,
-        "[BT] D 매수 스킵 거래량상한초과 — 시작 volRatio=%s max=%s",
-        volRatio.toFixed(2),
-        String(STRATEGY_D_VOLUME_RATIO_MAX),
-      );
-      volMaxSkipStateByMarket.set(market, true);
-    }
-    return;
-  }
-  if (wasSkipping) {
-    logger.info(
-      LOG_SOURCE,
-      "[BT] D 매수 스킵 거래량상한초과 해제 — 끝 volRatio=%s max=%s",
-      volRatio.toFixed(2),
-      String(STRATEGY_D_VOLUME_RATIO_MAX),
-    );
-    volMaxSkipStateByMarket.set(market, false);
-  }
-}
 
 /**
  * RSI 상한 초과 스킵 상태 (마켓별) — 전환 시점에만 로그.
@@ -177,15 +144,6 @@ export const checkBuySignalD = (
       volRatio,
       STRATEGY_D_VOLUME_RATIO,
     );
-
-    // 거래량 상한 필터: 급등 끝물 진입 차단 — 전환 시점에만 로그 (rsiMaxSkipStateByMarket 패턴과 동일)
-    // volRatio가 STRATEGY_D_VOLUME_RATIO_MAX 초과이면 이미 급등이 마감된 상태로 판단.
-    // 수집 목적: [BT] D 매수 로그 volRatio 분포에서 손실 케이스와 대조해 임계값 정밀화.
-    if (volRatio > STRATEGY_D_VOLUME_RATIO_MAX) {
-      logVolMaxSkipTransition(market, true, volRatio);
-      return null;
-    }
-    logVolMaxSkipTransition(market, false, volRatio);
 
     // [v3.4.20260312] 저가 코인 필터는 selectMarkets.ts(SELECT_MIN_PRICE)로 이관. 여기선 체크 불필요.
 

@@ -60,10 +60,6 @@ export const confirmOrderWithRetry = async (
 export interface BuyResult {
   ok: boolean;
   order?: UpbitOrderDetail;
-  /** confirmOrderWithRetry 후 계좌에서 확인된 코인 잔고 */
-  executedVolume?: string;
-  /** confirmOrderWithRetry 후 계좌에서 확인된 평균 매수가 */
-  avgBuyPrice?: number;
   message?: string;
 }
 
@@ -81,10 +77,15 @@ export const executeMarketBuy = async (
       message: `주문 금액 부족 (잔고: ${balance.toFixed(0)}원)`,
     };
   }
-  // 주문 체결과 체결 확인을 분리: 주문 실패만 ok:false, 확인 실패는 ok:true + vol=0
-  let order: UpbitOrderDetail;
   try {
-    order = await postMarketBuyOrder(accessKey, secretKey, market, amount);
+    const order = await postMarketBuyOrder(
+      accessKey,
+      secretKey,
+      market,
+      amount,
+    );
+    await confirmOrderWithRetry(accessKey, secretKey);
+    return { ok: true, order };
   } catch (e: unknown) {
     const err = e as {
       response?: { data?: { error?: { message?: string } } };
@@ -93,19 +94,6 @@ export const executeMarketBuy = async (
     const msg = err.response?.data?.error?.message ?? err.message ?? "unknown";
     return { ok: false, message: String(msg) };
   }
-
-  let executedVolume = "0";
-  let avgBuyPrice = 0;
-  try {
-    const accounts = await confirmOrderWithRetry(accessKey, secretKey);
-    const currency = market.replace("KRW-", "");
-    const account = accounts.find((a) => a.currency === currency);
-    executedVolume = account?.balance ?? "0";
-    avgBuyPrice = account?.avg_buy_price ? parseFloat(account.avg_buy_price) : 0;
-  } catch {
-    // 확인 실패 — 주문은 체결됐으므로 ok:true, vol=0으로 index.ts에서 failLog 처리
-  }
-  return { ok: true, order, executedVolume, avgBuyPrice };
 };
 
 /** 보유 수량 조회 (특정 마켓 코인) */
@@ -150,10 +138,15 @@ export const executeMarketSell = async (
   if (!(vol > 0)) {
     return { ok: false, message: "매도 수량 0" };
   }
-  // 주문 체결과 체결 확인을 분리: 주문 실패만 ok:false, 확인 실패는 ok:true
-  let order: UpbitOrderDetail;
   try {
-    order = await postMarketSellOrder(accessKey, secretKey, market, volume);
+    const order = await postMarketSellOrder(
+      accessKey,
+      secretKey,
+      market,
+      volume,
+    );
+    await confirmOrderWithRetry(accessKey, secretKey);
+    return { ok: true, order };
   } catch (e: unknown) {
     const err = e as {
       response?: { data?: { error?: { message?: string } } };
@@ -162,11 +155,4 @@ export const executeMarketSell = async (
     const msg = err.response?.data?.error?.message ?? err.message ?? "unknown";
     return { ok: false, message: String(msg) };
   }
-
-  try {
-    await confirmOrderWithRetry(accessKey, secretKey);
-  } catch {
-    // 확인 실패 — 매도는 체결됐으므로 ok:true
-  }
-  return { ok: true, order };
 };
