@@ -36,6 +36,9 @@ import { logger } from "../logger";
 
 const LOG_SOURCE = "strategyF";
 
+/** [진단] 마켓별 현재 차단 조건 — 조건이 바뀔 때만 로그, 1개 맵으로 통합 */
+const diagBlockedAt = new Map<string, string>(); // "" = 미차단, "C1"/"C2a"/"C2b"/"C3" = 차단 중
+
 const KST_OFFSET_MS = 9 * 60 * 60 * 1000;
 
 const pricesFromCandles = (candles: { trade_price: number }[]): number[] =>
@@ -124,7 +127,13 @@ export const checkBuySignalF = (
     const vwap5m = calcVwap(candles5m, STRATEGY_F_MIN_VWAP_CANDLES_5M);
     if (vwap5m === 0) return null;
     const lastClose5m = candles5m[candles5m.length - 1].trade_price;
-    if (lastClose5m <= vwap5m) return null;
+    if (lastClose5m <= vwap5m) {
+      if (diagBlockedAt.get(market) !== "C1") {
+        logger.info(LOG_SOURCE, "[진단] %s 차단→C1(5mVWAP) close5m=%s vwap5m=%s", market, lastClose5m.toFixed(0), vwap5m.toFixed(0));
+        diagBlockedAt.set(market, "C1");
+      }
+      return null;
+    }
 
     // closedCandles 처리 — 미완성 현재봉 제외
     const volumes1m = volumesFromCandles(candles1m);
@@ -139,15 +148,39 @@ export const checkBuySignalF = (
     // [조건 2] 1분봉 현재가 > VWAP_1m AND 현재가 > EMA21_1m
     const vwap1m = calcVwap(candles1m, STRATEGY_F_MIN_VWAP_CANDLES_1M);
     if (vwap1m === 0) return null;
-    if (currentPrice <= vwap1m) return null;
+    if (currentPrice <= vwap1m) {
+      if (diagBlockedAt.get(market) !== "C2a") {
+        logger.info(LOG_SOURCE, "[진단] %s 차단→C2a(VWAP1m) price=%s vwap1m=%s", market, currentPrice.toFixed(0), vwap1m.toFixed(0));
+        diagBlockedAt.set(market, "C2a");
+      }
+      return null;
+    }
 
     const ema21 = calculateEMA(closedPrices, STRATEGY_F_EMA_PERIOD);
-    if (currentPrice <= ema21) return null;
+    if (currentPrice <= ema21) {
+      if (diagBlockedAt.get(market) !== "C2b") {
+        logger.info(LOG_SOURCE, "[진단] %s 차단→C2b(EMA21) price=%s ema21=%s", market, currentPrice.toFixed(0), ema21.toFixed(0));
+        diagBlockedAt.set(market, "C2b");
+      }
+      return null;
+    }
 
     // [조건 3] 현재가 ≤ max(VWAP_1m, EMA21) × (1 + PROXIMITY_PCT/100) — 눌림목 위치
     const anchor = Math.max(vwap1m, ema21);
     const proximityThreshold = anchor * (1 + STRATEGY_F_PROXIMITY_PCT / 100);
-    if (currentPrice > proximityThreshold) return null;
+    if (currentPrice > proximityThreshold) {
+      if (diagBlockedAt.get(market) !== "C3") {
+        const distPct = ((currentPrice - anchor) / anchor * 100).toFixed(2);
+        logger.info(LOG_SOURCE, "[진단] %s 차단→C3(눌림목이탈) price=%s anchor=%s dist=%s%% thr=%s%%", market, currentPrice.toFixed(0), anchor.toFixed(0), distPct, String(STRATEGY_F_PROXIMITY_PCT));
+        diagBlockedAt.set(market, "C3");
+      }
+      return null;
+    }
+    // C1~C3 모두 통과 — 차단 상태 해제 기록
+    if (diagBlockedAt.get(market)) {
+      logger.info(LOG_SOURCE, "[진단] %s C1~C3 통과 (이전 차단: %s)", market, diagBlockedAt.get(market));
+      diagBlockedAt.set(market, "");
+    }
 
     // [조건 4] RSI 크로스 (2차 수정: 38로 복원 — EMA21 터치 조건[조건 7]이 품질 필터 역할을 대신하므로)
     const rsiPrices = closedPrices.slice(-(RSI_PERIOD + 2));
