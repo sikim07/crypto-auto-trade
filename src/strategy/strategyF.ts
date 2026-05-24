@@ -36,8 +36,37 @@ import { logger } from "../logger";
 
 const LOG_SOURCE = "strategyF";
 
-/** [진단] 마켓별 현재 차단 조건 — 조건이 바뀔 때만 로그, 1개 맵으로 통합 */
-const diagBlockedAt = new Map<string, string>(); // "" = 미차단, "C1"/"C2a"/"C2b"/"C3" = 차단 중
+/** [진단] 마켓별 현재 차단 조건 — C1~C8, 조건 변경 시에만 로그 */
+const diagBlockedAt = new Map<string, string>();
+/** [진단] 마켓별 마지막 진단 로그 시각 — C1~C3 경계 토글 노이즈 억제 */
+const diagLastLogMs = new Map<string, number>();
+
+/** C1~C3 내부 전환(C2b↔C3 등)만 최소 간격 적용. C4+ 진입·변경은 즉시 로그 */
+const DIAG_LOG_MIN_INTERVAL_MS = 30_000;
+const DIAG_TIER1 = new Set(["C1", "C2a", "C2b", "C3"]);
+
+/** 조건 변경 시 1회 로그 후 null 반환 (checkBuySignalF early return용) */
+const diagBlock = (
+  market: string,
+  code: string,
+  fmt: string,
+  ...args: (string | number)[]
+): null => {
+  const prev = diagBlockedAt.get(market) ?? "";
+  if (prev === code) return null;
+
+  const now = Date.now();
+  const elapsed = now - (diagLastLogMs.get(market) ?? 0);
+  const bothTier1 = DIAG_TIER1.has(prev) && DIAG_TIER1.has(code);
+  const shouldLog = !bothTier1 || elapsed >= DIAG_LOG_MIN_INTERVAL_MS;
+
+  diagBlockedAt.set(market, code);
+  if (!shouldLog) return null;
+
+  diagLastLogMs.set(market, now);
+  logger.info(LOG_SOURCE, fmt, market, ...args);
+  return null;
+};
 
 const KST_OFFSET_MS = 9 * 60 * 60 * 1000;
 
@@ -128,11 +157,13 @@ export const checkBuySignalF = (
     if (vwap5m === 0) return null;
     const lastClose5m = candles5m[candles5m.length - 1].trade_price;
     if (lastClose5m <= vwap5m) {
-      if (diagBlockedAt.get(market) !== "C1") {
-        logger.info(LOG_SOURCE, "[진단] %s 차단→C1(5mVWAP) close5m=%s vwap5m=%s", market, lastClose5m.toFixed(0), vwap5m.toFixed(0));
-        diagBlockedAt.set(market, "C1");
-      }
-      return null;
+      return diagBlock(
+        market,
+        "C1",
+        "[진단] %s 차단→C1(5mVWAP) close5m=%s vwap5m=%s",
+        lastClose5m.toFixed(0),
+        vwap5m.toFixed(0),
+      );
     }
 
     // closedCandles 처리 — 미완성 현재봉 제외
@@ -149,52 +180,78 @@ export const checkBuySignalF = (
     const vwap1m = calcVwap(candles1m, STRATEGY_F_MIN_VWAP_CANDLES_1M);
     if (vwap1m === 0) return null;
     if (currentPrice <= vwap1m) {
-      if (diagBlockedAt.get(market) !== "C2a") {
-        logger.info(LOG_SOURCE, "[진단] %s 차단→C2a(VWAP1m) price=%s vwap1m=%s", market, currentPrice.toFixed(0), vwap1m.toFixed(0));
-        diagBlockedAt.set(market, "C2a");
-      }
-      return null;
+      return diagBlock(
+        market,
+        "C2a",
+        "[진단] %s 차단→C2a(VWAP1m) price=%s vwap1m=%s",
+        currentPrice.toFixed(0),
+        vwap1m.toFixed(0),
+      );
     }
 
     const ema21 = calculateEMA(closedPrices, STRATEGY_F_EMA_PERIOD);
     if (currentPrice <= ema21) {
-      if (diagBlockedAt.get(market) !== "C2b") {
-        logger.info(LOG_SOURCE, "[진단] %s 차단→C2b(EMA21) price=%s ema21=%s", market, currentPrice.toFixed(0), ema21.toFixed(0));
-        diagBlockedAt.set(market, "C2b");
-      }
-      return null;
+      return diagBlock(
+        market,
+        "C2b",
+        "[진단] %s 차단→C2b(EMA21) price=%s ema21=%s",
+        currentPrice.toFixed(0),
+        ema21.toFixed(0),
+      );
     }
 
     // [조건 3] 현재가 ≤ max(VWAP_1m, EMA21) × (1 + PROXIMITY_PCT/100) — 눌림목 위치
     const anchor = Math.max(vwap1m, ema21);
     const proximityThreshold = anchor * (1 + STRATEGY_F_PROXIMITY_PCT / 100);
     if (currentPrice > proximityThreshold) {
-      if (diagBlockedAt.get(market) !== "C3") {
-        const distPct = ((currentPrice - anchor) / anchor * 100).toFixed(2);
-        logger.info(LOG_SOURCE, "[진단] %s 차단→C3(눌림목이탈) price=%s anchor=%s dist=%s%% thr=%s%%", market, currentPrice.toFixed(0), anchor.toFixed(0), distPct, String(STRATEGY_F_PROXIMITY_PCT));
-        diagBlockedAt.set(market, "C3");
-      }
-      return null;
-    }
-    // C1~C3 모두 통과 — 차단 상태 해제 기록
-    if (diagBlockedAt.get(market)) {
-      logger.info(LOG_SOURCE, "[진단] %s C1~C3 통과 (이전 차단: %s)", market, diagBlockedAt.get(market));
-      diagBlockedAt.set(market, "");
+      const distPct = ((currentPrice - anchor) / anchor * 100).toFixed(2);
+      return diagBlock(
+        market,
+        "C3",
+        "[진단] %s 차단→C3(눌림목이탈) price=%s anchor=%s dist=%s%% thr=%s%%",
+        currentPrice.toFixed(0),
+        anchor.toFixed(0),
+        distPct,
+        String(STRATEGY_F_PROXIMITY_PCT),
+      );
     }
 
     // [조건 4] RSI 크로스 (2차 수정: 38로 복원 — EMA21 터치 조건[조건 7]이 품질 필터 역할을 대신하므로)
     const rsiPrices = closedPrices.slice(-(RSI_PERIOD + 2));
     const rsiPrev = calculateRSI(rsiPrices.slice(0, -1));
     const rsiCur = calculateRSI(rsiPrices);
-    if (!(rsiPrev < STRATEGY_F_RSI_CROSS && rsiCur >= STRATEGY_F_RSI_CROSS))
-      return null;
+    if (!(rsiPrev < STRATEGY_F_RSI_CROSS && rsiCur >= STRATEGY_F_RSI_CROSS)) {
+      return diagBlock(
+        market,
+        "C4",
+        "[진단] %s 차단→C4(RSI) rsi=%s→%s thr=%s",
+        rsiPrev.toFixed(1),
+        rsiCur.toFixed(1),
+        String(STRATEGY_F_RSI_CROSS),
+      );
+    }
 
     // [조건 5] 마감봉 양봉: close > open. 반등 당김 시 FIRST_GREEN_ONLY면 직전봉 음봉/도지일 때만(첫 반등 양봉만)
     const lastClosed = closedCandles[closedCandles.length - 1];
-    if (lastClosed.trade_price <= lastClosed.opening_price) return null;
+    if (lastClosed.trade_price <= lastClosed.opening_price) {
+      return diagBlock(
+        market,
+        "C5",
+        "[진단] %s 차단→C5(양봉) close=%s open=%s",
+        lastClosed.trade_price.toFixed(0),
+        lastClosed.opening_price.toFixed(0),
+      );
+    }
     if (STRATEGY_F_FIRST_GREEN_ONLY && closedCandles.length >= 2) {
       const prevClosed = closedCandles[closedCandles.length - 2];
-      if (prevClosed.trade_price > prevClosed.opening_price) return null;
+      if (prevClosed.trade_price > prevClosed.opening_price) {
+        return diagBlock(
+          market,
+          "C5fg",
+          "[진단] %s 차단→C5(첫양봉) 직전봉도 양봉 close=%s",
+          prevClosed.trade_price.toFixed(0),
+        );
+      }
     }
 
     // [조건 6] 거래량 필터: 현재 거래량이 직전 N개 봉 평균 대비 최소 비율 이상일 때만 진입
@@ -208,8 +265,13 @@ export const checkBuySignalF = (
         STRATEGY_F_VOLUME_AVG_PERIOD,
       );
       if (volumeRatio < STRATEGY_F_VOLUME_RATIO_MIN) {
-        // 거래량 부족으로 진입 차단 (로그는 생략하여 노이즈 감소)
-        return null;
+        return diagBlock(
+          market,
+          "C6",
+          "[진단] %s 차단→C6(거래량) ratio=%s thr=%s",
+          volumeRatio.toFixed(2),
+          String(STRATEGY_F_VOLUME_RATIO_MIN),
+        );
       }
     }
 
@@ -229,7 +291,15 @@ export const checkBuySignalF = (
     const hasConfirmedBounce = touchCandleWindow.some(
       (c) => c.low_price <= emaUpperRef && c.trade_price >= ema21,
     );
-    if (!hasConfirmedBounce) return null;
+    if (!hasConfirmedBounce) {
+      return diagBlock(
+        market,
+        "C7",
+        "[진단] %s 차단→C7(EMA터치) window=%s봉 ema21=%s",
+        String(STRATEGY_F_EMA_TOUCH_WINDOW),
+        ema21.toFixed(0),
+      );
+    }
 
     // [v3.2.20260306] [조건 8] EMA21 기울기 필터
     // 목적: EMA21이 수평/하향인 박스권 상단에서의 반복 진입 차단.
@@ -249,7 +319,15 @@ export const checkBuySignalF = (
       }
       const emaSlope = linearRegressionSlope(emaHistory);
       emaSlopePct = ema21 > 0 ? (emaSlope / ema21) * 100 : 0;
-      if (emaSlopePct < STRATEGY_F_EMA_SLOPE_MIN_PCT) return null;
+      if (emaSlopePct < STRATEGY_F_EMA_SLOPE_MIN_PCT) {
+        return diagBlock(
+          market,
+          "C8",
+          "[진단] %s 차단→C8(EMA기울기) slope=%s%%/봉 thr=%s",
+          emaSlopePct.toFixed(4),
+          String(STRATEGY_F_EMA_SLOPE_MIN_PCT),
+        );
+      }
     }
 
     // 거래량 비율 계산 (로깅용)
@@ -262,6 +340,9 @@ export const checkBuySignalF = (
         STRATEGY_F_VOLUME_AVG_PERIOD,
       );
     }
+
+    diagBlockedAt.delete(market);
+    diagLastLogMs.delete(market);
 
     logger.info(
       LOG_SOURCE,
