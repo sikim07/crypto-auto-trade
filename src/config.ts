@@ -764,7 +764,7 @@ export const STRATEGY_F_RSI_CROSS = 38;
  * true: 직전 마감봉이 음봉 또는 도지(close ≤ open)일 때만 마감봉 양봉 인정 → "첫 반등 양봉"만 진입.
  * false: 마감봉 양봉이기만 하면 진입(기존). 반등 당김 시 true 권장.
  */
-export const STRATEGY_F_FIRST_GREEN_ONLY = true;
+export const STRATEGY_F_FIRST_GREEN_ONLY = false;
 /** 1분봉 VWAP 유효성 최소 당일 캔들 수 (30분 경과 보장) */
 export const STRATEGY_F_MIN_VWAP_CANDLES_1M = 30;
 /** 5분봉 VWAP 유효성 최소 당일 캔들 수 (5분봉 6개 = 30분 경과 보장) */

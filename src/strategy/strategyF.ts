@@ -216,16 +216,18 @@ export const checkBuySignalF = (
       );
     }
 
-    // [조건 4] RSI 크로스 (2차 수정: 38로 복원 — EMA21 터치 조건[조건 7]이 품질 필터 역할을 대신하므로)
+    // [조건 4] RSI 수준 조건 (크로스오버 → 수준 조건으로 변경)
+    // 이유: 상승 추세 내 눌림목에서 RSI는 40~70을 유지하므로 크로스오버(38 이하→이상)는
+    //       구조적으로 거의 발생 불가능. EMA21 위(C2b), VWAP 위(C1/C2a) 조건이 통과된
+    //       상태에서 RSI<38은 사실상 불가능한 조합이므로 수준 조건으로 완화.
     const rsiPrices = closedPrices.slice(-(RSI_PERIOD + 2));
     const rsiPrev = calculateRSI(rsiPrices.slice(0, -1));
     const rsiCur = calculateRSI(rsiPrices);
-    if (!(rsiPrev < STRATEGY_F_RSI_CROSS && rsiCur >= STRATEGY_F_RSI_CROSS)) {
+    if (rsiCur < STRATEGY_F_RSI_CROSS) {
       return diagBlock(
         market,
         "C4",
-        "[진단] %s 차단→C4(RSI) rsi=%s→%s thr=%s",
-        rsiPrev.toFixed(1),
+        "[진단] %s 차단→C4(RSI) rsi=%s thr=%s",
         rsiCur.toFixed(1),
         String(STRATEGY_F_RSI_CROSS),
       );
