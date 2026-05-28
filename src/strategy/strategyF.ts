@@ -10,6 +10,7 @@ import {
   STRATEGY_F_EMA_PERIOD,
   STRATEGY_F_PROXIMITY_PCT,
   STRATEGY_F_RSI_CROSS,
+  STRATEGY_F_RSI_UPPER,
   STRATEGY_F_FIRST_GREEN_ONLY,
   STRATEGY_F_MIN_VWAP_CANDLES_1M,
   STRATEGY_F_MIN_VWAP_CANDLES_5M,
@@ -200,8 +201,10 @@ export const checkBuySignalF = (
       );
     }
 
-    // [조건 3] 현재가 ≤ max(VWAP_1m, EMA21) × (1 + PROXIMITY_PCT/100) — 눌림목 위치
-    const anchor = Math.max(vwap1m, ema21);
+    // [조건 3] 현재가 ≤ VWAP_1m × (1 + PROXIMITY_PCT/100) — 눌림목 위치
+    // anchor를 vwap1m으로만 사용: EMA21은 실시간 갱신되어 가격 상승 시 자동으로
+    // dist가 줄어드는 왜곡 발생. EMA21 근접 조건은 C2b가 이미 담당.
+    const anchor = vwap1m;
     const proximityThreshold = anchor * (1 + STRATEGY_F_PROXIMITY_PCT / 100);
     if (currentPrice > proximityThreshold) {
       const distPct = ((currentPrice - anchor) / anchor * 100).toFixed(2);
@@ -216,20 +219,21 @@ export const checkBuySignalF = (
       );
     }
 
-    // [조건 4] RSI 수준 조건 (크로스오버 → 수준 조건으로 변경)
-    // 이유: 상승 추세 내 눌림목에서 RSI는 40~70을 유지하므로 크로스오버(38 이하→이상)는
-    //       구조적으로 거의 발생 불가능. EMA21 위(C2b), VWAP 위(C1/C2a) 조건이 통과된
-    //       상태에서 RSI<38은 사실상 불가능한 조합이므로 수준 조건으로 완화.
+    // [조건 4] RSI 수준 조건 — 하한(RSI_CROSS) 이상 + 상한(RSI_UPPER) 미만
+    // 하한: EMA21/VWAP 위에서 RSI<38은 사실상 불가능한 조합이므로 수준 조건으로 완화.
+    // 상한: 이전봉 RSI가 RSI_UPPER(65) 이상이면 과열 구간으로 판단하여 진입 차단.
+    //       눌림목 전략 특성상 RSI 65+ 구간은 이미 상승 끝 단계.
     const rsiPrices = closedPrices.slice(-(RSI_PERIOD + 2));
     const rsiPrev = calculateRSI(rsiPrices.slice(0, -1));
     const rsiCur = calculateRSI(rsiPrices);
-    if (rsiCur < STRATEGY_F_RSI_CROSS) {
+    if (rsiCur < STRATEGY_F_RSI_CROSS || rsiPrev >= STRATEGY_F_RSI_UPPER) {
       return diagBlock(
         market,
         "C4",
-        "[진단] %s 차단→C4(RSI) rsi=%s thr=%s",
+        "[진단] %s 차단→C4(RSI) rsi=%s thr=%s upper=%s",
         rsiCur.toFixed(1),
         String(STRATEGY_F_RSI_CROSS),
+        String(STRATEGY_F_RSI_UPPER),
       );
     }
 

@@ -742,7 +742,7 @@ export const STRATEGY_F_EMA_PERIOD = 21;
  * VWAP/EMA21 근접 허용 범위 (%) — 이 이내이면 눌림목 위치로 판단.
  * 기존 0.4. 반등 당김: 0.5로 완화해 지지 터치 직후 진입 여지 확대.
  */
-export const STRATEGY_F_PROXIMITY_PCT = 0.5;
+export const STRATEGY_F_PROXIMITY_PCT = 2.0;
 /**
  * RSI 반등 돌파 기준선 — rsiPrev < 이 값 → rsiCur ≥ 이 값.
  *
@@ -760,6 +760,8 @@ export const STRATEGY_F_PROXIMITY_PCT = 0.5;
  *   - RSI 38 복원 후에도 손절이 빈번하면 39~40으로 재상향 검토.
  */
 export const STRATEGY_F_RSI_CROSS = 38;
+/** RSI 상한: 이전봉 RSI가 이 값 이상이면 과열 구간으로 판단하여 진입 차단 */
+export const STRATEGY_F_RSI_UPPER = 65;
 /**
  * true: 직전 마감봉이 음봉 또는 도지(close ≤ open)일 때만 마감봉 양봉 인정 → "첫 반등 양봉"만 진입.
  * false: 마감봉 양봉이기만 하면 진입(기존). 반등 당김 시 true 권장.
@@ -771,8 +773,8 @@ export const STRATEGY_F_MIN_VWAP_CANDLES_1M = 30;
 export const STRATEGY_F_MIN_VWAP_CANDLES_5M = 6;
 export const STRATEGY_F_STOP_LOSS_PCT = -1.5;
 export const STRATEGY_F_MAX_HOLD_MINUTES = 15;
-export const STRATEGY_F_TRAILING_ACTIVATE_PCT = 1.0;
-export const STRATEGY_F_TRAILING_OFFSET_PCT = 0.5;
+export const STRATEGY_F_TRAILING_ACTIVATE_PCT = 0.5;
+export const STRATEGY_F_TRAILING_OFFSET_PCT = 0.3;
 /**
  * 진입가 대비 이 % 이하로 떨어지면 진입 수준 이탈 손절 (진입봉 저가 대신 사용)
  *
