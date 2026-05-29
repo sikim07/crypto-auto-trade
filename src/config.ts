@@ -773,7 +773,7 @@ export const STRATEGY_F_MIN_VWAP_CANDLES_1M = 30;
 export const STRATEGY_F_MIN_VWAP_CANDLES_5M = 6;
 export const STRATEGY_F_STOP_LOSS_PCT = -1.5;
 export const STRATEGY_F_MAX_HOLD_MINUTES = 15;
-export const STRATEGY_F_TRAILING_ACTIVATE_PCT = 0.5;
+export const STRATEGY_F_TRAILING_ACTIVATE_PCT = 0.4;
 export const STRATEGY_F_TRAILING_OFFSET_PCT = 0.3;
 /**
  * 진입가 대비 이 % 이하로 떨어지면 진입 수준 이탈 손절 (진입봉 저가 대신 사용)

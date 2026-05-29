@@ -226,7 +226,7 @@ export const checkBuySignalF = (
     const rsiPrices = closedPrices.slice(-(RSI_PERIOD + 2));
     const rsiPrev = calculateRSI(rsiPrices.slice(0, -1));
     const rsiCur = calculateRSI(rsiPrices);
-    if (rsiCur < STRATEGY_F_RSI_CROSS || rsiPrev >= STRATEGY_F_RSI_UPPER) {
+    if (rsiCur < STRATEGY_F_RSI_CROSS || rsiCur >= STRATEGY_F_RSI_UPPER || rsiPrev >= STRATEGY_F_RSI_UPPER) {
       return diagBlock(
         market,
         "C4",
