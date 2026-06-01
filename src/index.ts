@@ -39,6 +39,7 @@ import {
   STRATEGY_D_LOSS_COOLDOWN_MS,
   STRATEGY_F_COOLDOWN_MS,
   STRATEGY_F_LOSS_COOLDOWN_MS,
+  STRATEGY_F_MAX_DAILY_TRADES_PER_TICKER,
   STRATEGY_A_ENABLED,
   STRATEGY_B_ENABLED,
   STRATEGY_C_ENABLED,
@@ -107,10 +108,12 @@ const strategyFCooldown: Record<string, number> = {};
 /** 전략 F 쿨다운 차단 로그 쓰로틀 (종목별 마지막 로그 시각) */
 const strategyFCooldownLastLog: Record<string, number> = {};
 /**
- * 전략 F 손실 종목 쿨다운 [2차 수정] — 손실 매도 후 15분 재진입 차단
+ * 전략 F 손실 종목 쿨다운 — 손실 매도 후 30분 재진입 차단
  * 수익 매도는 기존 strategyFCooldown(5분)만 적용, 손실 매도는 두 쿨다운 모두 적용.
  */
 const strategyFLossCooldown: Record<string, number> = {};
+/** 전략 F 종목별 당일 매매 횟수 (KST 0시 리셋, 일일 카운터 초기화에서 함께 리셋) */
+const strategyFDailyTradeCount: Record<string, number> = {};
 
 /** 레짐 차단 로그: 급락/쿨다운 구간에 진입했는지 (시작/종료만 로그용) */
 let regimeBlockCrashingActive = false;
@@ -156,10 +159,9 @@ const resetDailyLossIfNewDay = (): void => {
     dailyProfitKrw = 0;
     dailyLimitLogged = false;
     lastResetDate = today;
-    // [v3.7.20260318] 전략 B 당일 손절 카운터 및 쿨다운 초기화
-    // 새 날짜 시작 시 전일 손절 횟수·쿨다운 모두 리셋 → 종목에 대해 당일 제한 없이 재시작.
     for (const k of Object.keys(strategyBLossCount)) delete strategyBLossCount[k];
     for (const k of Object.keys(strategyBLossCooldown)) delete strategyBLossCooldown[k];
+    for (const k of Object.keys(strategyFDailyTradeCount)) delete strategyFDailyTradeCount[k];
     logger.info(LOG_SOURCE, "일일 카운터 초기화 (새 날짜: %s)", today);
   }
 };
@@ -180,16 +182,17 @@ const printStartupBanner = (): void => {
     hour12: false,
   });
   // stdout (out.log)
+  console.log("");
   console.log(line);
-  console.log(`  🚀 CRYPTO AUTO TRADE BOT 기동`);
+  console.log(`  CRYPTO AUTO TRADE BOT 배포/기동`);
   console.log(`  시각: ${now} (KST)`);
   console.log(`  PID : ${process.pid}`);
   console.log(`  로그: ${tradeLogPath}`);
   console.log(line);
-  // stderr (error.log) — 재기동 시 에러 로그에도 구분점이 보이도록
+  // stderr (error.log)
   console.error("");
   console.error("▼".repeat(60));
-  console.error(`  ♻️  BOT 재기동 / 기동`);
+  console.error(`  BOT 재기동 / 기동`);
   console.error(`  시각: ${now} (KST)`);
   console.error(`  PID : ${process.pid}`);
   console.error("▼".repeat(60));
@@ -521,26 +524,22 @@ const run = async (): Promise<void> => {
                   finalNetPct.toFixed(2),
                 );
               }
-              // 전략 F 쿨다운 등록 [2차 수정]
-              // - 기존: 손익 무관 단일 5분 쿨다운
-              // - 변경: 수익→5분(재진입 허용), 손실→15분(재진입 차단) 이중 구조로 분리
-              //   이유: 손실 후 5분만 지나면 동일 종목 재진입해 손실 반복되는 패턴 방지
               if (strategyTag === "F") {
                 strategyFCooldown[position.market] = Date.now();
-                logger.info(
-                  LOG_SOURCE,
-                  "[쿨다운] 전략F 종목 등록: %s",
-                  position.market,
-                );
+                strategyFDailyTradeCount[position.market] =
+                  (strategyFDailyTradeCount[position.market] ?? 0) + 1;
+                const fDailyCount = strategyFDailyTradeCount[position.market]!;
                 if (finalNetPct < 0) {
                   strategyFLossCooldown[position.market] = Date.now();
-                  logger.info(
-                    LOG_SOURCE,
-                    "[쿨다운] 전략F 손실 종목 등록: %s (순수익 %s%%)",
-                    position.market,
-                    finalNetPct.toFixed(2),
-                  );
                 }
+                logger.info(
+                  LOG_SOURCE,
+                  "[쿨다운] 전략F 종목 등록: %s (순수익 %s%%, 당일 %s/%s회)",
+                  position.market,
+                  finalNetPct.toFixed(2),
+                  String(fDailyCount),
+                  String(STRATEGY_F_MAX_DAILY_TRADES_PER_TICKER),
+                );
               }
               const tradeProfitStr =
                 tradeProfitKrw >= 0
@@ -863,31 +862,33 @@ const run = async (): Promise<void> => {
         !buyD?.shouldBuy &&
         !buyE?.shouldBuy
       ) {
-        // [2차 수정] 이중 쿨다운 체크
-        // - winCooldown: 수익/손실 무관 5분 (빠른 재진입 허용)
-        // - lossCooldown: 손실 후 15분 (반복 손실 방지)
-        // 손실 매도 시 두 쿨다운이 모두 등록되므로 15분이 사실상 우선 적용됨
-        const fWinCooldownTime = strategyFCooldown[market];
-        const fLossCooldownTime = strategyFLossCooldown[market];
-        const winBlocked =
-          !!fWinCooldownTime &&
-          Date.now() - fWinCooldownTime < STRATEGY_F_COOLDOWN_MS;
-        const lossBlocked =
-          !!fLossCooldownTime &&
-          Date.now() - fLossCooldownTime < STRATEGY_F_LOSS_COOLDOWN_MS;
-
-        if (winBlocked || lossBlocked) {
-          // 쿨다운 중 — 진입 차단 (만료 시 아래 else에서 로그)
+        // 일일 매매 제한 체크
+        const fDailyCount = strategyFDailyTradeCount[market] ?? 0;
+        if (fDailyCount >= STRATEGY_F_MAX_DAILY_TRADES_PER_TICKER) {
+          // 당일 제한 도달 — 진입 차단
         } else {
-          // 만료된 쿨다운 맵에서 정리
-          if (fWinCooldownTime) {
-            delete strategyFCooldown[market];
-            delete strategyFCooldownLastLog[market];
+          // 이중 쿨다운 체크: 수익/무관 5분 + 손실 30분
+          const fWinCooldownTime = strategyFCooldown[market];
+          const fLossCooldownTime = strategyFLossCooldown[market];
+          const winBlocked =
+            !!fWinCooldownTime &&
+            Date.now() - fWinCooldownTime < STRATEGY_F_COOLDOWN_MS;
+          const lossBlocked =
+            !!fLossCooldownTime &&
+            Date.now() - fLossCooldownTime < STRATEGY_F_LOSS_COOLDOWN_MS;
+
+          if (winBlocked || lossBlocked) {
+            // 쿨다운 중
+          } else {
+            if (fWinCooldownTime) {
+              delete strategyFCooldown[market];
+              delete strategyFCooldownLastLog[market];
+            }
+            if (fLossCooldownTime) {
+              delete strategyFLossCooldown[market];
+            }
+            buyF = checkBuySignalF(market, price);
           }
-          if (fLossCooldownTime) {
-            delete strategyFLossCooldown[market];
-          }
-          buyF = checkBuySignalF(market, price);
         }
       }
       const buySignal = buyB ?? buyA ?? buyC ?? buyD ?? buyE ?? buyF;

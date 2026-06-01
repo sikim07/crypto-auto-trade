@@ -29,6 +29,7 @@ import {
   STRATEGY_F_EMA_TOUCH_BUFFER_PCT,
   STRATEGY_F_EMA_SLOPE_LOOKBACK,
   STRATEGY_F_EMA_SLOPE_MIN_PCT,
+  STRATEGY_F_VWAP_BREACH_GRACE_SEC,
   COST_PCT,
 } from "../config";
 import type { BuySignalResult, SellSignalResult } from "./signal";
@@ -108,31 +109,7 @@ const calcVwap = (candles: UpbitCandle[], minCandles: number): number => {
 
 /**
  * 전략 F 매수: 5분봉 VWAP 위, 1분봉 VWAP+EMA21 위, 눌림목 위치, RSI 크로스, 마감봉 양봉.
- *
- * [1차 수정] RSI_CROSS 42→38 (반등 당김), PROXIMITY_PCT 0.4→0.5, FIRST_GREEN_ONLY=true 도입.
- *   이후 개선: RSI_CROSS 38→40 (허수 반등 빈발 대응 — 보수적 조정).
- *
- * [2차 수정] 네 가지 변경:
- *   (A) RSI_CROSS 40→38 복원: [조건 7] EMA21 확정 지지 조건이 추가됨으로써
- *       허수 반등 차단 역할을 EMA21 터치 확인이 대신하게 됨. RSI 조기 진입의
- *       단점(허수 반등)을 EMA21 터치 조건으로 상쇄하므로 반등 초입 타이밍 확보를
- *       위해 38로 복원.
- *   (B) [조건 7] EMA21 확정 지지 추가: 최근 N봉 내 저가(low_price)가 EMA21
- *       이하로 내려갔다가 종가(trade_price)가 EMA21 이상으로 회복한 봉이
- *       1개 이상 존재해야 진입. 단순히 "EMA21 위에 있다"가 아닌 "EMA21에서
- *       실제로 반등했다"를 확인하여 가짜 지지선(플로팅)에 진입하는 허수 반등 차단.
- *   (C) TRAILING_TIGHTEN_THRESHOLD 1.5→1.0: 최대수익 1.0% 달성 시 즉시
- *       타이트닝 오프셋(0.3%) 적용, 수익 보존 강화.
- *   (D) [조건 8] EMA21 기울기 필터 추가: 직전 N봉의 EMA21 값으로 선형회귀
- *       기울기를 산출해 EMA21이 수평/하향이면 진입 차단. EMA21이 수평인 박스권
- *       상단에서의 반복 진입 방지 (KITE 3회 연속 EMA21=456 수평 사례).
- *       조건 7(지지 확인)과 조건 8(방향 확인)이 함께 작동해 "반등 + 상승 추세"
- *       두 조건을 모두 만족할 때만 진입.
- *   확인할 것:
- *   - EMA21 터치 조건으로 진입 횟수가 얼마나 줄었는지 (신호 과소 시 TOUCH_BUFFER_PCT 완화).
- *   - RSI 38 복원 후 진입이탈 손절 빈도 변화 (38 단독 시절 대비 개선 여부).
- *   - 트레일링 타이트닝 1.0% 기준에서 조기 청산 vs 수익 보존 균형.
- *   - [BT] 로그 emaSlopePct 분포 확인 후 SLOPE_MIN_PCT 조정 (과소 신호 시 하향, 수평 진입 반복 시 상향).
+ * 조건 C1~C8: 5mVWAP → 1mVWAP+EMA21 → 눌림목거리 → RSI → 양봉 → 거래량 → EMA터치 → EMA기울기
  */
 export const checkBuySignalF = (
   market: string,
@@ -350,30 +327,19 @@ export const checkBuySignalF = (
     diagBlockedAt.delete(market);
     diagLastLogMs.delete(market);
 
+    const distPctBuy = ((currentPrice - anchor) / anchor * 100).toFixed(2);
     logger.info(
       LOG_SOURCE,
-      "[시그널] %s | 매수 조건 충족 | 가격 %s | VWAP1m %s | EMA21 %s | EMA기울기 %s%%/봉 | RSI %s→%s | 거래량비율 %s",
+      "[시그널] %s | 매수 조건 충족 | 가격 %s | VWAP1m %s (dist %s%%) | EMA21 %s (slope %s%%/봉) | RSI %s→%s | vol %s",
       market,
       currentPrice.toFixed(0),
       vwap1m.toFixed(0),
+      distPctBuy,
       ema21.toFixed(0),
       emaSlopePct.toFixed(4),
       rsiPrev.toFixed(1),
       rsiCur.toFixed(1),
       volumeRatio.toFixed(2),
-    );
-    logger.info(
-      LOG_SOURCE,
-      "[BT] F 매수 vwap1m=%s ema21=%s emaSlopePct=%s RSI=%s→%s proximityPct=%s volRatio=%s emaTouch=%s price=%s",
-      vwap1m.toFixed(0),
-      ema21.toFixed(4),
-      emaSlopePct.toFixed(4),
-      rsiPrev.toFixed(1),
-      rsiCur.toFixed(1),
-      String(STRATEGY_F_PROXIMITY_PCT),
-      volumeRatio.toFixed(2),
-      hasConfirmedBounce ? "Y" : "N",
-      currentPrice.toFixed(0),
     );
     return {
       shouldBuy: true,
@@ -407,12 +373,6 @@ export const checkSellSignalF = (
         market,
         netPct.toFixed(2),
       );
-      logger.info(
-        LOG_SOURCE,
-        "[BT] F 매도 type=손절 netPct=%s thr=%s",
-        netPct.toFixed(2),
-        String(STRATEGY_F_STOP_LOSS_PCT),
-      );
       return {
         shouldSell: true,
         reason: `전략F 손절 (순수익 ${netPct.toFixed(2)}%)`,
@@ -427,16 +387,10 @@ export const checkSellSignalF = (
       if (currentPrice < entryBreachPrice) {
         logger.info(
           LOG_SOURCE,
-          "[시그널] %s | 손절 (진입 수준 이탈) 현재가 %s < 진입가대비 %s%% 이하",
+          "[시그널] %s | 손절 (진입 수준 이탈) 현재가 %s < 진입가대비 %s%% 이하 (순수익 %s%%)",
           market,
           currentPrice.toFixed(0),
           STRATEGY_F_ENTRY_BREACH_PCT,
-        );
-        logger.info(
-          LOG_SOURCE,
-          "[BT] F 매도 type=진입이탈 price=%s breachPct=%s netPct=%s",
-          currentPrice.toFixed(0),
-          String(STRATEGY_F_ENTRY_BREACH_PCT),
           netPct.toFixed(2),
         );
         return {
@@ -446,31 +400,26 @@ export const checkSellSignalF = (
       }
     }
 
-    // 3. VWAP 붕괴: 현재가 < VWAP_1m × (1 - VWAP_BUFFER_PCT/100) 또는 마감봉 종가 < VWAP_1m × (1 - VWAP_BUFFER_PCT/100)
-    // [개선] VWAP 버퍼 추가
-    // 목적: 일시적인 가격 하락(꼬리 달기, Under-shooting)에 대한 방어
-    // 이유: 로그 분석 결과 VWAP와 정확히 같거나 약간 하회하는 일시적 하락으로 즉시 손절되는 문제 발생
+    // 3. VWAP 붕괴: 진입 120초 내 버퍼 2배 확대, 이후 기본 버퍼
     const candles1m = getCandles(market, 1);
     if (candles1m.length > 0) {
       const vwap1m = calcVwap(candles1m, STRATEGY_F_MIN_VWAP_CANDLES_1M);
       if (vwap1m > 0) {
-        const vwapBreachPrice = vwap1m * (1 - STRATEGY_F_VWAP_BUFFER_PCT / 100);
+        const holdSec = holdMs / 1000;
+        const inGrace = holdSec < STRATEGY_F_VWAP_BREACH_GRACE_SEC;
+        const effectiveBuffer = inGrace
+          ? STRATEGY_F_VWAP_BUFFER_PCT * 2
+          : STRATEGY_F_VWAP_BUFFER_PCT;
+        const vwapBreachPrice = vwap1m * (1 - effectiveBuffer / 100);
         if (currentPrice < vwapBreachPrice) {
           logger.info(
             LOG_SOURCE,
-            "[시그널] %s | 손절 (VWAP 붕괴) 현재가 %s < VWAP버퍼 %s (VWAP %s)",
+            "[시그널] %s | 손절 (VWAP 붕괴) 현재가 %s < VWAP버퍼 %s (VWAP %s, 버퍼 %s%%, 순수익 %s%%)",
             market,
             currentPrice.toFixed(0),
             vwapBreachPrice.toFixed(0),
             vwap1m.toFixed(0),
-          );
-          logger.info(
-            LOG_SOURCE,
-            "[BT] F 매도 type=VWAP붕괴 price=%s vwap1m=%s vwapBreach=%s bufferPct=%s netPct=%s",
-            currentPrice.toFixed(0),
-            vwap1m.toFixed(0),
-            vwapBreachPrice.toFixed(0),
-            String(STRATEGY_F_VWAP_BUFFER_PCT),
+            effectiveBuffer.toFixed(1),
             netPct.toFixed(2),
           );
           return {
@@ -486,24 +435,22 @@ export const checkSellSignalF = (
         ? candles1m.slice(0, -1)
         : candles1m;
       if (closedCandles.length > 0 && vwap1m > 0) {
-        const vwapBreachPrice = vwap1m * (1 - STRATEGY_F_VWAP_BUFFER_PCT / 100);
+        const holdSec = holdMs / 1000;
+        const inGrace = holdSec < STRATEGY_F_VWAP_BREACH_GRACE_SEC;
+        const effectiveBuffer = inGrace
+          ? STRATEGY_F_VWAP_BUFFER_PCT * 2
+          : STRATEGY_F_VWAP_BUFFER_PCT;
+        const vwapBreachPrice = vwap1m * (1 - effectiveBuffer / 100);
         const lastClose = closedCandles[closedCandles.length - 1].trade_price;
         if (lastClose < vwapBreachPrice) {
           logger.info(
             LOG_SOURCE,
-            "[시그널] %s | 손절 (VWAP 붕괴) 마감 종가 %s < VWAP버퍼 %s (VWAP %s)",
+            "[시그널] %s | 손절 (VWAP 붕괴) 마감 종가 %s < VWAP버퍼 %s (VWAP %s, 버퍼 %s%%, 순수익 %s%%)",
             market,
             lastClose.toFixed(0),
             vwapBreachPrice.toFixed(0),
             vwap1m.toFixed(0),
-          );
-          logger.info(
-            LOG_SOURCE,
-            "[BT] F 매도 type=VWAP붕괴(종가) close=%s vwap1m=%s vwapBreach=%s bufferPct=%s netPct=%s",
-            lastClose.toFixed(0),
-            vwap1m.toFixed(0),
-            vwapBreachPrice.toFixed(0),
-            String(STRATEGY_F_VWAP_BUFFER_PCT),
+            effectiveBuffer.toFixed(1),
             netPct.toFixed(2),
           );
           return {
@@ -514,35 +461,23 @@ export const checkSellSignalF = (
       }
     }
 
-    // 4. 트레일링 스톱 (D 방식 — maxNetPct 기반, index.ts에서 공통 갱신)
-    // [개선] 가변형 트레일링 스톱 도입
-    // 목적: 높은 수익 구간에서 수익 보존 강화
-    // 이유: 로그 분석 결과 최대 수익이 높을 때도 고정 오프셋으로 인해 수익이 많이 줄어드는 문제 발생
+    // 4. 트레일링 스톱 (가변형: 기본 0.5%, tighten 구간 0.3%)
     if (position.maxNetPct >= STRATEGY_F_TRAILING_ACTIVATE_PCT) {
-      // 최대 수익이 타이트닝 기준을 돌파하면 오프셋을 좁혀 수익을 더 타이트하게 보존
       const trailingOffset =
         position.maxNetPct >= STRATEGY_F_TRAILING_TIGHTEN_THRESHOLD
           ? STRATEGY_F_TRAILING_TIGHTEN_OFFSET
           : STRATEGY_F_TRAILING_OFFSET_PCT;
       const trailingDropPct = position.maxNetPct - netPct;
       if (trailingDropPct >= trailingOffset) {
+        const tighten = position.maxNetPct >= STRATEGY_F_TRAILING_TIGHTEN_THRESHOLD;
         logger.info(
           LOG_SOURCE,
-          "[시그널] %s | 트레일링 스톱 (고점 %s%% → 현재 %s%%, 오프셋 %s%%)",
+          "[시그널] %s | 트레일링 스톱 (고점 %s%% → 현재 %s%%, 오프셋 %s%%%s)",
           market,
           position.maxNetPct.toFixed(2),
           netPct.toFixed(2),
           trailingOffset.toFixed(1),
-        );
-        logger.info(
-          LOG_SOURCE,
-          "[BT] F 매도 type=트레일링 maxPct=%s curPct=%s offsetPct=%s tighten=%s",
-          position.maxNetPct.toFixed(2),
-          netPct.toFixed(2),
-          String(trailingOffset),
-          position.maxNetPct >= STRATEGY_F_TRAILING_TIGHTEN_THRESHOLD
-            ? "Y"
-            : "N",
+          tighten ? " tighten" : "",
         );
         return {
           shouldSell: true,
@@ -556,17 +491,11 @@ export const checkSellSignalF = (
     if (holdMin >= STRATEGY_F_MAX_HOLD_MINUTES) {
       logger.info(
         LOG_SOURCE,
-        "[시그널] %s | 시간초과 (보유 %s분, 순수익 %s%%)",
+        "[시그널] %s | 시간초과 (보유 %s분, 순수익 %s%%, 고점 %s%%)",
         market,
         holdMin.toFixed(1),
         netPct.toFixed(2),
-      );
-      logger.info(
-        LOG_SOURCE,
-        "[BT] F 매도 type=시간초과 holdMin=%s netPct=%s maxHold=%s",
-        holdMin.toFixed(1),
-        netPct.toFixed(2),
-        String(STRATEGY_F_MAX_HOLD_MINUTES),
+        position.maxNetPct.toFixed(2),
       );
       return {
         shouldSell: true,
