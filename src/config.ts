@@ -235,6 +235,11 @@ export const STRATEGY_F_EMA_SLOPE_LOOKBACK = 5;
 /** EMA21 봉당 최소 상승률 (%) — 미만이면 수평/하향으로 진입 차단 */
 export const STRATEGY_F_EMA_SLOPE_MIN_PCT = 0.01;
 
+/** 레인지 위치 필터 — 최근 N봉 고저 레인지 내 현재가 위치로 상단 진입 차단 */
+export const STRATEGY_F_RANGE_LOOKBACK = 20;
+/** 레인지 내 최대 허용 위치 (0~1) — 이 값 초과 시 레인지 상단으로 판단해 진입 차단 */
+export const STRATEGY_F_RANGE_MAX_POSITION = 0.70;
+
 /**
  * VWAP 붕괴 유예 시간 (초) — 진입 후 이 시간 내에는 VWAP 버퍼를 2배로 확대
  *

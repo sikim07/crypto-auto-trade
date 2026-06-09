@@ -29,6 +29,8 @@ import {
   STRATEGY_F_EMA_TOUCH_BUFFER_PCT,
   STRATEGY_F_EMA_SLOPE_LOOKBACK,
   STRATEGY_F_EMA_SLOPE_MIN_PCT,
+  STRATEGY_F_RANGE_LOOKBACK,
+  STRATEGY_F_RANGE_MAX_POSITION,
   STRATEGY_F_VWAP_BREACH_GRACE_SEC,
   COST_PCT,
 } from "../config";
@@ -45,7 +47,7 @@ const diagLastLogMs = new Map<string, number>();
 
 /** C1~C3 내부 전환(C2b↔C3 등)만 최소 간격 적용. C4+ 진입·변경은 즉시 로그 */
 const DIAG_LOG_MIN_INTERVAL_MS = 30_000;
-const DIAG_TIER1 = new Set(["C1", "C2a", "C2b", "C3"]);
+const DIAG_TIER1 = new Set(["C1", "C2a", "C2b", "C3", "C9"]);
 
 /** 조건 변경 시 1회 로그 후 null 반환 (checkBuySignalF early return용) */
 const diagBlock = (
@@ -196,6 +198,30 @@ export const checkBuySignalF = (
       );
     }
 
+    // [조건 9] 레인지 위치 필터 — 최근 N봉 고저 레인지에서 현재가가 상단 X% 이상이면 차단
+    // 목적: 박스권 상단에 올라간 뒤 뒤늦게 매수하는 패턴 방지
+    // C3(VWAP 근접)과 역할 분리: C3은 VWAP 대비 거리, C9은 최근 가격 구조 내 위치
+    if (closedCandles.length >= STRATEGY_F_RANGE_LOOKBACK) {
+      const rangeCandles = closedCandles.slice(-STRATEGY_F_RANGE_LOOKBACK);
+      const rangeHigh = Math.max(...rangeCandles.map((c) => c.high_price));
+      const rangeLow = Math.min(...rangeCandles.map((c) => c.low_price));
+      const rangeWidth = rangeHigh - rangeLow;
+      if (rangeWidth > 0) {
+        const rangePos = (currentPrice - rangeLow) / rangeWidth;
+        if (rangePos > STRATEGY_F_RANGE_MAX_POSITION) {
+          return diagBlock(
+            market,
+            "C9",
+            "[진단] %s 차단→C9(레인지상단) pos=%s%% thr=%s%% high=%s low=%s",
+            (rangePos * 100).toFixed(0),
+            (STRATEGY_F_RANGE_MAX_POSITION * 100).toFixed(0),
+            rangeHigh.toFixed(0),
+            rangeLow.toFixed(0),
+          );
+        }
+      }
+    }
+
     // [조건 4] RSI 수준 조건 — 하한(RSI_CROSS) 이상 + 상한(RSI_UPPER) 미만
     // 하한: EMA21/VWAP 위에서 RSI<38은 사실상 불가능한 조합이므로 수준 조건으로 완화.
     // 상한: 이전봉 RSI가 RSI_UPPER(65) 이상이면 과열 구간으로 판단하여 진입 차단.
@@ -313,7 +339,7 @@ export const checkBuySignalF = (
       }
     }
 
-    // 거래량 비율 계산 (로깅용)
+    // 거래량 비율 및 레인지 위치 계산 (로깅용)
     let volumeRatio = 0;
     if (volumes1m.length >= STRATEGY_F_VOLUME_AVG_PERIOD + 1) {
       const currentVolume = volumes1m[volumes1m.length - 1];
@@ -323,6 +349,14 @@ export const checkBuySignalF = (
         STRATEGY_F_VOLUME_AVG_PERIOD,
       );
     }
+    let rangePosLog = 0;
+    if (closedCandles.length >= STRATEGY_F_RANGE_LOOKBACK) {
+      const rc = closedCandles.slice(-STRATEGY_F_RANGE_LOOKBACK);
+      const rh = Math.max(...rc.map((c) => c.high_price));
+      const rl = Math.min(...rc.map((c) => c.low_price));
+      const rw = rh - rl;
+      if (rw > 0) rangePosLog = (currentPrice - rl) / rw;
+    }
 
     diagBlockedAt.delete(market);
     diagLastLogMs.delete(market);
@@ -330,7 +364,7 @@ export const checkBuySignalF = (
     const distPctBuy = ((currentPrice - anchor) / anchor * 100).toFixed(2);
     logger.info(
       LOG_SOURCE,
-      "[시그널] %s | 매수 조건 충족 | 가격 %s | VWAP1m %s (dist %s%%) | EMA21 %s (slope %s%%/봉) | RSI %s→%s | vol %s",
+      "[시그널] %s | 매수 조건 충족 | 가격 %s | VWAP1m %s (dist %s%%) | EMA21 %s (slope %s%%/봉) | RSI %s→%s | vol %s | 레인지 %s%%",
       market,
       currentPrice.toFixed(0),
       vwap1m.toFixed(0),
@@ -340,6 +374,7 @@ export const checkBuySignalF = (
       rsiPrev.toFixed(1),
       rsiCur.toFixed(1),
       volumeRatio.toFixed(2),
+      (rangePosLog * 100).toFixed(0),
     );
     return {
       shouldBuy: true,
