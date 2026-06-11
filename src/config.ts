@@ -192,7 +192,7 @@ export const STRATEGY_E_STOP_BELOW_LOWER_RATIO = 0.99;
 /** 전략 F: VWAP 눌림목 반등 */
 export const STRATEGY_F_EMA_PERIOD = 21;
 /** VWAP 근접 허용 범위 (%) — VWAP 대비 이 이내이면 눌림목 위치 */
-export const STRATEGY_F_PROXIMITY_PCT = 1.5;
+export const STRATEGY_F_PROXIMITY_PCT = 1.8;
 /** RSI 반등 돌파 기준선 */
 export const STRATEGY_F_RSI_CROSS = 38;
 /** RSI 상한 — 과열 구간 진입 차단 */

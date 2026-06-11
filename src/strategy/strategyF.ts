@@ -45,9 +45,8 @@ const diagBlockedAt = new Map<string, string>();
 /** [진단] 마켓별 마지막 진단 로그 시각 — C1~C3 경계 토글 노이즈 억제 */
 const diagLastLogMs = new Map<string, number>();
 
-/** C1~C3 내부 전환(C2b↔C3 등)만 최소 간격 적용. C4+ 진입·변경은 즉시 로그 */
+/** 모든 조건 전환에 최소 간격 적용 — 1초 내 C3↔C5 등 반복 로그 방지 */
 const DIAG_LOG_MIN_INTERVAL_MS = 30_000;
-const DIAG_TIER1 = new Set(["C1", "C2a", "C2b", "C3", "C9"]);
 
 /** 조건 변경 시 1회 로그 후 null 반환 (checkBuySignalF early return용) */
 const diagBlock = (
@@ -61,11 +60,9 @@ const diagBlock = (
 
   const now = Date.now();
   const elapsed = now - (diagLastLogMs.get(market) ?? 0);
-  const bothTier1 = DIAG_TIER1.has(prev) && DIAG_TIER1.has(code);
-  const shouldLog = !bothTier1 || elapsed >= DIAG_LOG_MIN_INTERVAL_MS;
 
   diagBlockedAt.set(market, code);
-  if (!shouldLog) return null;
+  if (elapsed < DIAG_LOG_MIN_INTERVAL_MS) return null;
 
   diagLastLogMs.set(market, now);
   logger.info(LOG_SOURCE, fmt, market, ...args);
@@ -361,11 +358,14 @@ export const checkBuySignalF = (
     diagBlockedAt.delete(market);
     diagLastLogMs.delete(market);
 
-    const distPctBuy = ((currentPrice - anchor) / anchor * 100).toFixed(2);
+    const distPctBuyNum = ((currentPrice - anchor) / anchor) * 100;
+    const distPctBuy = distPctBuyNum.toFixed(2);
+    const proxTag = distPctBuyNum > 1.5 ? " [PROX확장]" : "";
     logger.info(
       LOG_SOURCE,
-      "[시그널] %s | 매수 조건 충족 | 가격 %s | VWAP1m %s (dist %s%%) | EMA21 %s (slope %s%%/봉) | RSI %s→%s | vol %s | 레인지 %s%%",
+      "[시그널] %s | 매수 조건 충족%s | 가격 %s | VWAP1m %s (dist %s%%) | EMA21 %s (slope %s%%/봉) | RSI %s→%s | vol %s | 레인지 %s%%",
       market,
+      proxTag,
       currentPrice.toFixed(0),
       vwap1m.toFixed(0),
       distPctBuy,
