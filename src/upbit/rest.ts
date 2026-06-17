@@ -1,7 +1,37 @@
-import axios from "axios";
+import axios, { AxiosError } from "axios";
 import { UPBIT_BASE_URL, REST_TIMEOUT_MS, UPBIT_ACCESS_KEY, UPBIT_SECRET_KEY } from "../common/config";
 import { generateToken, generateTokenWithBody } from "./auth";
 import type { UpbitCandle, UpbitAccount, UpbitOrder, UpbitOrderDetail, UpbitOrderbook, UpbitTicker } from "../common/types";
+
+/** Upbit KRW 마켓 호가 단위 (가격대별 주문 가격 단위) */
+export const getPriceUnit = (price: number): number => {
+  if (price >= 2_000_000) return 1_000;
+  if (price >= 1_000_000) return 500;
+  if (price >= 500_000) return 100;
+  if (price >= 100_000) return 50;
+  if (price >= 10_000) return 10;
+  if (price >= 1_000) return 5;
+  if (price >= 100) return 1;
+  if (price >= 10) return 0.1;
+  if (price >= 1) return 0.01;
+  return 0.001;
+};
+
+/** 가격을 호가 단위에 맞게 내림 */
+export const roundPrice = (price: number): number => {
+  const unit = getPriceUnit(price);
+  return Math.floor(price / unit) * unit;
+};
+
+/** Axios 에러에서 Upbit 응답 메시지 추출 */
+const extractErrorMsg = (e: unknown): string => {
+  const err = e as AxiosError<{ error?: { message?: string; name?: string } }>;
+  if (err.response?.data?.error) {
+    const { name, message } = err.response.data.error;
+    return `${err.response.status} ${name ?? ""}: ${message ?? ""}`.trim();
+  }
+  return (e as Error).message ?? "unknown";
+};
 
 const api = axios.create({
   baseURL: UPBIT_BASE_URL,
@@ -71,18 +101,23 @@ export const placeLimitOrder = async (
   price: number,
   volume: number,
 ): Promise<UpbitOrderDetail> => {
+  const adjustedPrice = roundPrice(price);
   const bodyParams: Record<string, string> = {
     market,
     side,
     ord_type: "limit",
-    price: String(price),
+    price: String(adjustedPrice),
     volume: String(volume),
   };
-  const token = generateTokenWithBody(UPBIT_ACCESS_KEY, UPBIT_SECRET_KEY, bodyParams);
-  const { data } = await api.post<UpbitOrderDetail>("/orders", bodyParams, {
-    headers: authHeader(token),
-  });
-  return data;
+  try {
+    const token = generateTokenWithBody(UPBIT_ACCESS_KEY, UPBIT_SECRET_KEY, bodyParams);
+    const { data } = await api.post<UpbitOrderDetail>("/orders", bodyParams, {
+      headers: authHeader(token),
+    });
+    return data;
+  } catch (e) {
+    throw new Error(extractErrorMsg(e));
+  }
 };
 
 export const cancelOrder = async (uuid: string): Promise<UpbitOrder> => {

@@ -1,10 +1,24 @@
 import { GRID } from "./gridConfig";
 import { getState, recordTrade } from "./gridState";
-import { placeLimitOrder, cancelOrder, getOrder } from "../upbit/rest";
+import { placeLimitOrder, cancelOrder, getOrder, roundPrice } from "../upbit/rest";
 import { out, trade } from "../common/logger";
 import type { GridLevel } from "../common/types";
 
 const LOG = "grid/orders";
+
+// 주문 실패 시 재시도 방지 (레벨별 쿨다운)
+const failedLevels = new Map<number, number>(); // index → 실패 시각
+const FAIL_COOLDOWN_MS = 5 * 60 * 1000; // 5분
+
+const isOnCooldown = (index: number): boolean => {
+  const failedAt = failedLevels.get(index);
+  if (!failedAt) return false;
+  if (Date.now() - failedAt > FAIL_COOLDOWN_MS) {
+    failedLevels.delete(index);
+    return false;
+  }
+  return true;
+};
 
 const findClosestLevelIndex = (price: number): number => {
   const state = getState();
@@ -27,6 +41,7 @@ export const placeGridOrders = async (currentPrice: number): Promise<void> => {
   for (const level of state.levels) {
     const dist = Math.abs(level.index - centerIdx);
     if (dist > GRID.ACTIVE_LEVELS) continue;
+    if (isOnCooldown(level.index)) continue;
 
     if (level.status === "idle") {
       if (level.price < currentPrice) {
@@ -47,16 +62,19 @@ const placeBuyOrder = async (level: GridLevel): Promise<void> => {
     return;
   }
 
-  const volume = investPerLevel / level.price;
+  const price = roundPrice(level.price);
+  const volume = investPerLevel / price;
+
   try {
-    const order = await placeLimitOrder(GRID.MARKET, "bid", level.price, volume);
+    const order = await placeLimitOrder(GRID.MARKET, "bid", price, volume);
     level.status = "buy_placed";
     level.orderUuid = order.uuid;
-    out.debug("buy-place-" + level.index, LOG, "[BUY 배치] idx=%s 가격=%s",
-      String(level.index), level.price.toLocaleString());
+    out.info(LOG, "[BUY 배치] idx=%s 가격=%s 수량=%s",
+      String(level.index), price.toLocaleString(), volume.toFixed(8));
   } catch (e) {
-    out.warn("buy-fail-" + level.index, LOG, "[BUY 실패] idx=%s: %s",
-      String(level.index), (e as Error).message);
+    failedLevels.set(level.index, Date.now());
+    out.info(LOG, "[BUY 실패] idx=%s 가격=%s: %s (5분 쿨다운)",
+      String(level.index), price.toLocaleString(), (e as Error).message);
   }
 };
 
@@ -65,16 +83,17 @@ const placeSellOrder = async (level: GridLevel): Promise<void> => {
 
   const state = getState();
   if (!state) return;
-  const sellPrice = level.price + state.gridInterval;
+  const sellPrice = roundPrice(level.price + state.gridInterval);
 
   try {
     const order = await placeLimitOrder(GRID.MARKET, "ask", sellPrice, level.buyVolume);
     level.status = "sell_placed";
     level.orderUuid = order.uuid;
-    out.debug("sell-place-" + level.index, LOG, "[SELL 배치] idx=%s 매수가=%s 매도가=%s",
+    out.info(LOG, "[SELL 배치] idx=%s 매수가=%s 매도가=%s",
       String(level.index), level.price.toLocaleString(), sellPrice.toLocaleString());
   } catch (e) {
-    out.warn("sell-fail-" + level.index, LOG, "[SELL 실패] idx=%s: %s",
+    failedLevels.set(level.index, Date.now());
+    out.info(LOG, "[SELL 실패] idx=%s: %s (5분 쿨다운)",
       String(level.index), (e as Error).message);
   }
 };
@@ -117,7 +136,6 @@ const handleBuyFilled = (level: GridLevel, order: { executed_volume: string; pai
   level.buyVolume = executedVolume;
   level.filledCount += 1;
 
-  // err 로그 — 트레이드 이력
   trade.fill(LOG, "[BUY] idx=%s 가격=%s 수량=%s 수수료=%s원",
     String(level.index), level.price.toLocaleString(),
     executedVolume.toFixed(8), fee.toFixed(0));
@@ -143,7 +161,6 @@ const handleSellFilled = (level: GridLevel, order: { executed_volume: string; pa
   level.buyVolume = undefined;
   level.filledCount += 1;
 
-  // err 로그 — 트레이드 이력
   trade.fill(LOG, "[SELL] idx=%s 매수=%s 매도=%s 순익=%s원 (누적: %s원 / %s건)",
     String(level.index), buyPrice.toLocaleString(), sellPrice.toLocaleString(),
     netProfit.toFixed(0), state.totalRealizedProfit.toFixed(0),

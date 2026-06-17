@@ -73,7 +73,16 @@ jobs:
             echo '✅ 서버의 .env 파일을 사용합니다.'
           "
 
-      # 8. PM2 프로세스 재시작
+      # 8. 로그 디렉토리 + 상태 파일 정리
+      - name: Prepare runtime
+        run: |
+          ssh -i ~/.ssh/id_rsa root@${{ secrets.VULTR_HOST }} "
+            cd ~/crypto-auto-trade
+            mkdir -p logs
+            rm -f grid-state.json
+          "
+
+      # 9. PM2 프로세스 재시작
       - name: Restart PM2 process
         run: |
           ssh -i ~/.ssh/id_rsa root@${{ secrets.VULTR_HOST }} "
