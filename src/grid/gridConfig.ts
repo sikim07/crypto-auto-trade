@@ -5,16 +5,16 @@ export const GRID = {
   // 범위 (0이면 현재가 기준 RANGE_PCT로 자동 계산)
   RANGE_UPPER: 0,
   RANGE_LOWER: 0,
-  RANGE_PCT: 1,
+  RANGE_PCT: 2,
 
   // 그리드 단계 수 (간격 = 범위 / 단계수)
-  GRID_COUNT: 1,
+  GRID_COUNT: 5,
 
   // 투입 금액 (원)
-  TOTAL_INVEST_KRW: 6_000,
+  TOTAL_INVEST_KRW: 50_000,
 
   // 현재가 근처 ±N단계만 실제 주문 배치 (API 호출 최소화)
-  ACTIVE_LEVELS: 1,
+  ACTIVE_LEVELS: 2,
 
   // 주기 (ms)
   POLL_INTERVAL_MS: 10_000,

@@ -1,19 +1,24 @@
 import { ARB } from "./arbConfig";
 import { startCexFeed, stopCexFeed, startDexFeed, stopDexFeed, getCexPrice } from "./priceFeed";
 import { findOpportunity, getSpreadSummary } from "./profitCalc";
+import { executeTrade, getDailyStats } from "./arbExecutor";
 import { verifyConnection as verifyBinance } from "../exchange/binance";
+import { verifySolanaConnection } from "../exchange/dex/jupiter";
 import { out, trade } from "../common/logger";
-import { BINANCE_API_KEY, BINANCE_SECRET_KEY } from "../common/config";
+import { BINANCE_API_KEY, BINANCE_SECRET_KEY, SOLANA_PRIVATE_KEY } from "../common/config";
 
 const LOG = "arb/bot";
 
 let pollTimer: ReturnType<typeof setInterval> | null = null;
 let reportTimer: ReturnType<typeof setInterval> | null = null;
+let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
 let dailyProfitUsd = 0;
 let dailyTradeCount = 0;
 let opportunitiesFound = 0;
+let scanCount = 0;
 
 const scan = (): void => {
+  scanCount++;
   for (const symbol of ARB.SYMBOLS) {
     const opp = findOpportunity(symbol);
     if (!opp) continue;
@@ -25,8 +30,25 @@ const scan = (): void => {
         opp.symbol, opp.direction,
         opp.spreadPct, opp.netProfit,
         opp.cexPrice, opp.dexPrice);
+    } else {
+      // LIVE 모드: 실제 거래 실행
+      executeTrade(opp).then((result) => {
+        if (result.success) {
+          dailyProfitUsd += result.netPnl;
+          dailyTradeCount++;
+        }
+      }).catch((e) => {
+        trade.fill(LOG, "[ERROR] 실행 실패: %s", (e as Error).message);
+      });
     }
   }
+};
+
+const printHeartbeat = (): void => {
+  const cexSymbols = ARB.SYMBOLS.filter(s => getCexPrice(s)).length;
+  out.debug("heartbeat", LOG, "alive | scans=%s opp=%s cex=%s/%s",
+    String(scanCount), String(opportunitiesFound),
+    String(cexSymbols), String(ARB.SYMBOLS.length));
 };
 
 const printReport = (): void => {
@@ -37,6 +59,11 @@ const printReport = (): void => {
     `  모니터링: ${ARB.SYMBOLS.join(", ")}`,
     `  기회 감지: ${opportunitiesFound}건`,
   ];
+
+  if (!ARB.DRY_RUN) {
+    const stats = getDailyStats();
+    lines.push(`  금일 거래: ${stats.dailyTradeCount}건 | 손실: $${stats.dailyLossUsd.toFixed(2)}`);
+  }
 
   for (const symbol of ARB.SYMBOLS) {
     const summary = getSpreadSummary(symbol);
@@ -56,6 +83,7 @@ const shutdown = async (signal: string): Promise<void> => {
   trade.system(LOG, "%s 수신, 종료", signal);
   if (pollTimer) clearInterval(pollTimer);
   if (reportTimer) clearInterval(reportTimer);
+  if (heartbeatTimer) clearInterval(heartbeatTimer);
   stopCexFeed();
   stopDexFeed();
   process.exit(0);
@@ -99,6 +127,21 @@ const main = async (): Promise<void> => {
     process.exit(1);
   }
 
+  // LIVE 모드: Solana 연결 확인
+  if (!ARB.DRY_RUN) {
+    if (!SOLANA_PRIVATE_KEY) {
+      trade.system(LOG, "SOLANA_PRIVATE_KEY 미설정 — DRY_RUN으로 전환");
+      out.important(LOG, "SOLANA_PRIVATE_KEY 미설정 — DRY_RUN 모드로 동작");
+      (ARB as { DRY_RUN: boolean }).DRY_RUN = true;
+    } else {
+      const solOk = await verifySolanaConnection();
+      if (!solOk) {
+        trade.system(LOG, "Solana 연결 실패 — DRY_RUN으로 전환");
+        (ARB as { DRY_RUN: boolean }).DRY_RUN = true;
+      }
+    }
+  }
+
   // CEX 가격 피드 시작
   out.info(LOG, "CEX 가격 피드 시작");
   startCexFeed();
@@ -115,6 +158,9 @@ const main = async (): Promise<void> => {
   // 리포트 (30분마다 + 30초 후 첫 리포트)
   reportTimer = setInterval(printReport, ARB.REPORT_INTERVAL_MS);
   setTimeout(printReport, 30_000);
+
+  // Heartbeat (10분마다)
+  heartbeatTimer = setInterval(printHeartbeat, 10 * 60 * 1000);
 
   // 종료 시그널
   process.on("SIGINT", () => shutdown("SIGINT"));

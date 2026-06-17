@@ -12,8 +12,10 @@ const LOG = "grid/bot";
 let pollTimer: ReturnType<typeof setInterval> | null = null;
 let saveTimer: ReturnType<typeof setInterval> | null = null;
 let reportTimer: ReturnType<typeof setInterval> | null = null;
+let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
 let lastPrice = 0;
 let isProcessing = false;
+let tickCount = 0;
 
 const getCurrentPrice = async (): Promise<number> => {
   const tickers = await getTicker([GRID.MARKET]);
@@ -50,6 +52,7 @@ const tick = async (): Promise<void> => {
   try {
     const price = await getCurrentPrice();
     lastPrice = price;
+    tickCount++;
     resetApiError();
 
     const guard = getGuardStatus();
@@ -95,6 +98,7 @@ const shutdown = async (signal: string): Promise<void> => {
   if (pollTimer) clearInterval(pollTimer);
   if (saveTimer) clearInterval(saveTimer);
   if (reportTimer) clearInterval(reportTimer);
+  if (heartbeatTimer) clearInterval(heartbeatTimer);
 
   try {
     await cancelAllOrders();
@@ -160,6 +164,13 @@ const main = async (): Promise<void> => {
   reportTimer = setInterval(() => {
     if (lastPrice > 0) printReport(lastPrice);
   }, GRID.REPORT_INTERVAL_MS);
+
+  // Heartbeat (10분마다)
+  heartbeatTimer = setInterval(() => {
+    const guard = getGuardStatus();
+    out.debug("heartbeat", LOG, "alive | price=%s guard=%s ticks=%s",
+      lastPrice > 0 ? lastPrice.toLocaleString() : "N/A", guard, String(tickCount));
+  }, 10 * 60 * 1000);
 
   // 즉시 첫 리포트
   if (lastPrice > 0) printReport(lastPrice);

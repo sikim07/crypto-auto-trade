@@ -16,9 +16,15 @@ const cexPrices = new Map<string, CexPrice>();
 
 export const getCexPrice = (symbol: string): CexPrice | undefined => cexPrices.get(symbol);
 
+const cexFirstReceived = new Set<string>();
+
 export const startCexFeed = (): void => {
   subscribePrices(ARB.SYMBOLS, (symbol, bid, ask) => {
     cexPrices.set(symbol, { bid, ask, updatedAt: Date.now() });
+    if (!cexFirstReceived.has(symbol)) {
+      cexFirstReceived.add(symbol);
+      out.info(LOG, "%s CEX 가격 수신 시작: bid=%s ask=%s", symbol, bid.toFixed(4), ask.toFixed(4));
+    }
   });
 };
 
@@ -29,11 +35,13 @@ export const stopCexFeed = (): void => {
 // ── DEX 가격 (Jupiter API, 폴링) ──
 
 // 솔라나 토큰 민트 주소
-const MINT_MAP: Record<string, { base: string; quote: string }> = {
+const MINT_MAP: Record<string, { base: string; quote: string; baseDecimals: number }> = {
   SOLUSDT: {
     base: "So11111111111111111111111111111111111111112",  // SOL
     quote: "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB", // USDT (Solana)
+    baseDecimals: 9,
   },
+  // ETHUSDT: Solana DEX에서 ETH 유동성 부족 → Binance 전용 모니터링
 };
 
 interface DexQuote {
@@ -80,10 +88,17 @@ const fetchJupiterQuote = async (
 let dexPollTimer: ReturnType<typeof setInterval> | null = null;
 
 export const startDexFeed = (): void => {
+  // 지원하지 않는 심볼 경고
+  for (const symbol of ARB.SYMBOLS) {
+    if (!MINT_MAP[symbol]) {
+      out.info(LOG, "%s: Solana DEX 미지원 → CEX 전용 모니터링", symbol);
+    }
+  }
+
   const pollDex = async () => {
     for (const symbol of ARB.SYMBOLS) {
       const mints = MINT_MAP[symbol];
-      if (!mints) continue; // 지원하지 않는 심볼 스킵
+      if (!mints) continue;
 
       // DEX에서 매수 (USDT → SOL): USDT를 넣고 SOL을 받음
       const buyQuote = await fetchJupiterQuote(

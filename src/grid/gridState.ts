@@ -68,7 +68,17 @@ export const loadState = (): GridState | null => {
   try {
     if (!fs.existsSync(stateFilePath)) return null;
     const raw = fs.readFileSync(stateFilePath, "utf-8");
-    state = JSON.parse(raw) as GridState;
+    const saved = JSON.parse(raw) as GridState;
+
+    // 설정 불일치 감지: 종목, 단계 수가 바뀌면 새 그리드 생성
+    if (saved.market !== GRID.MARKET || saved.levels.length !== GRID.GRID_COUNT + 1) {
+      out.info(LOG, "설정 변경 감지 (종목: %s→%s, 단계: %s→%s) — 새 그리드 생성",
+        saved.market, GRID.MARKET,
+        String(saved.levels.length - 1), String(GRID.GRID_COUNT));
+      return null;
+    }
+
+    state = saved;
     out.info(LOG, "상태 복구: %s건 거래, 누적 수익 %s원",
       String(state.tradeCount), state.totalRealizedProfit.toFixed(0));
     return state;
