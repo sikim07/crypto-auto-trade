@@ -78,8 +78,8 @@ jobs:
         run: |
           ssh -i ~/.ssh/id_rsa root@${{ secrets.VULTR_HOST }} "
             cd ~/crypto-auto-trade
-            pm2 stop crypto-auto-trade 2>/dev/null || true
-            pm2 delete crypto-auto-trade 2>/dev/null || true
+            pm2 stop grid-bot 2>/dev/null || true
+            pm2 delete grid-bot 2>/dev/null || true
             pm2 start ecosystem.config.js
             pm2 save
             pm2 list

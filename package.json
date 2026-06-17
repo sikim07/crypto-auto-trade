@@ -1,15 +1,12 @@
 {
   "name": "crypto-auto-trade",
-  "version": "1.0.0",
-  "description": "Upbit KRW auto-trading bot (1m candle, BB/RSI/MACD)",
-  "main": "dist/index.js",
+  "version": "2.0.0",
+  "description": "Grid trading bot (Upbit) + DEX-CEX arbitrage",
+  "main": "dist/grid/gridBot.js",
   "scripts": {
     "build": "tsc",
-    "start": "node dist/index.js",
-    "dev": "ts-node src/index.ts",
-    "test:rest": "node dist/scripts/testRest.js",
-    "test:indicators": "node dist/scripts/testIndicators.js",
-    "test:ws": "node dist/scripts/testWsCandle.js"
+    "start:grid": "node dist/grid/gridBot.js",
+    "start": "node dist/grid/gridBot.js"
   },
   "engines": {
     "node": ">=18"

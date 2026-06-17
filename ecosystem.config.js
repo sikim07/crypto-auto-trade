@@ -1,13 +1,13 @@
 module.exports = {
   apps: [
     {
-      name: "crypto-auto-trade",
-      script: "dist/index.js",
+      name: "grid-bot",
+      script: "dist/grid/gridBot.js",
       cwd: __dirname,
       instances: 1,
       autorestart: true,
       watch: false,
-      max_memory_restart: "300M",
+      max_memory_restart: "200M",
       env: {
         NODE_ENV: "production",
       },
