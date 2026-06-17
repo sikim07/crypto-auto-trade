@@ -15,7 +15,7 @@ export const ARB = {
   EST_GAS_USD: 0.01,            // 예상 가스비 $ (솔라나 기준)
 
   // 주기
-  PRICE_POLL_MS: 2_000,         // DEX 가격 조회 주기 (ms)
+  PRICE_POLL_MS: 10_000,        // DEX 가격 조회 주기 (ms)
   REPORT_INTERVAL_MS: 30 * 60 * 1000, // 리포트 주기 (30분)
 
   // 안전장치
