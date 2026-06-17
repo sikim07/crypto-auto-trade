@@ -6,6 +6,7 @@
   "scripts": {
     "build": "tsc",
     "start:grid": "node dist/grid/gridBot.js",
+    "start:arb": "node dist/arb/arbBot.js",
     "start": "node dist/grid/gridBot.js"
   },
   "engines": {
