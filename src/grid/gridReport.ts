@@ -26,9 +26,10 @@ export const printReport = (currentPrice: number): void => {
     : ((currentPrice - state.rangeLower) / (state.rangeUpper - state.rangeLower)) * 100;
 
   const net = state.totalRealizedProfit + unrealized;
-  out.important(LOG, "[GRID] %s | %s원 (범위 %s%%) | %s | 거래 %s건 | 순익 %s원 | 미체결 B%s/S%s",
+  out.important(LOG, "[GRID] %s | %s원 (범위 %s%%) | %s | 거래 %s건 | 누적 %s원 | 금일 %s원 | 미체결 B%s/S%s",
     GRID.MARKET, currentPrice.toLocaleString(), rangePosition.toFixed(0),
     guard, String(state.tradeCount),
     (net >= 0 ? "+" : "") + net.toFixed(0),
+    (state.dailyRealizedProfit >= 0 ? "+" : "") + (state.dailyRealizedProfit ?? 0).toFixed(0),
     String(buys), String(sells));
 };

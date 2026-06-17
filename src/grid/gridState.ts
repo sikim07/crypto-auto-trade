@@ -2,12 +2,16 @@ import * as fs from "fs";
 import * as path from "path";
 import { GRID } from "./gridConfig";
 import { out } from "../common/logger";
-import type { GridState, GridLevel } from "../common/types";
+import type { GridState, GridLevel, GridTradeRecord } from "../common/types";
 
 const LOG = "grid/state";
 const stateFilePath = path.resolve(process.cwd(), GRID.STATE_FILE);
 
 let state: GridState | null = null;
+
+const getKstDate = (): string => {
+  return new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Seoul" });
+};
 
 export const getState = (): GridState | null => state;
 
@@ -36,6 +40,9 @@ export const initGrid = (currentPrice: number): GridState => {
     totalRealizedProfit: 0,
     totalFees: 0,
     tradeCount: 0,
+    dailyRealizedProfit: 0,
+    dailyDate: getKstDate(),
+    tradeHistory: [],
     startedAt: Date.now(),
     lastUpdatedAt: Date.now(),
   };
@@ -47,11 +54,24 @@ export const initGrid = (currentPrice: number): GridState => {
   return state;
 };
 
-export const recordTrade = (profit: number, fee: number): void => {
+export const checkDailyReset = (): void => {
+  if (!state) return;
+  const today = getKstDate();
+  if (state.dailyDate !== today) {
+    out.info(LOG, "일일 손익 리셋: %s원 → 0 (날짜 %s → %s)",
+      state.dailyRealizedProfit.toFixed(0), state.dailyDate, today);
+    state.dailyRealizedProfit = 0;
+    state.dailyDate = today;
+  }
+};
+
+export const recordTrade = (profit: number, fee: number, record: GridTradeRecord): void => {
   if (!state) return;
   state.totalRealizedProfit += profit;
   state.totalFees += fee;
   state.tradeCount += 1;
+  state.dailyRealizedProfit += profit;
+  state.tradeHistory.push(record);
   state.lastUpdatedAt = Date.now();
 };
 
@@ -78,9 +98,16 @@ export const loadState = (): GridState | null => {
       return null;
     }
 
+    // 기존 state 마이그레이션 (dailyDate, tradeHistory 없는 경우)
+    if (!saved.dailyDate) saved.dailyDate = getKstDate();
+    if (saved.dailyRealizedProfit === undefined) saved.dailyRealizedProfit = 0;
+    if (!saved.tradeHistory) saved.tradeHistory = [];
+
     state = saved;
-    out.info(LOG, "상태 복구: %s건 거래, 누적 수익 %s원",
-      String(state.tradeCount), state.totalRealizedProfit.toFixed(0));
+    checkDailyReset();
+    out.info(LOG, "상태 복구: %s건 거래, 누적 수익 %s원, 금일 수익 %s원",
+      String(state.tradeCount), state.totalRealizedProfit.toFixed(0),
+      state.dailyRealizedProfit.toFixed(0));
     return state;
   } catch (e) {
     out.warn("state-load", LOG, "상태 복구 실패: %s", (e as Error).message);
@@ -90,7 +117,8 @@ export const loadState = (): GridState | null => {
 
 export const getDailyProfit = (): number => {
   if (!state) return 0;
-  return state.totalRealizedProfit;
+  checkDailyReset();
+  return state.dailyRealizedProfit;
 };
 
 export const resetState = (): void => {

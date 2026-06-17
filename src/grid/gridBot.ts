@@ -1,5 +1,5 @@
 import { GRID } from "./gridConfig";
-import { initGrid, loadState, saveState, getState, getDailyProfit } from "./gridState";
+import { initGrid, loadState, saveState, getState, getDailyProfit, checkDailyReset } from "./gridState";
 import { placeGridOrders, checkFilledOrders, cancelAllOrders } from "./gridOrders";
 import { getGuardStatus, checkRangeBreak, checkDailyLoss, tryResume, recordApiError, resetApiError } from "./trendGuard";
 import { printReport } from "./gridReport";
@@ -54,12 +54,11 @@ const tick = async (): Promise<void> => {
 
     const guard = getGuardStatus();
 
-    if (guard === "STOPPED") {
-      isProcessing = false;
-      return;
-    }
+    // 일일 리셋 체크 + 체결 확인 (STOPPED/PAUSED에서도 수행)
+    checkDailyReset();
+    await checkFilledOrders(price);
 
-    if (guard === "PAUSED") {
+    if (guard === "STOPPED" || guard === "PAUSED") {
       tryResume(price);
       isProcessing = false;
       return;
@@ -76,8 +75,7 @@ const tick = async (): Promise<void> => {
       return;
     }
 
-    // 체결 확인 + 주문 배치
-    await checkFilledOrders();
+    // 주문 배치
     await placeGridOrders(price);
 
   } catch (e) {
@@ -115,13 +113,7 @@ const shutdown = async (signal: string): Promise<void> => {
 
 const main = async (): Promise<void> => {
   // ── 시작 배너 (양쪽 로그 모두) ──
-  const banner = [
-    "▶▶▶ GRID BOT DEPLOY ▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶",
-    `  PID: ${process.pid}`,
-    `  종목: ${GRID.MARKET} | 투입: ${GRID.TOTAL_INVEST_KRW.toLocaleString()}원`,
-    `  단계: ${GRID.GRID_COUNT} | 범위: ±${GRID.RANGE_PCT}%`,
-    "▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶",
-  ].join("\n");
+  const banner = `\n▶▶▶ GRID BOT DEPLOY ▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶\n  PID: ${process.pid} | 종목: ${GRID.MARKET} | 투입: ${GRID.TOTAL_INVEST_KRW.toLocaleString()}원 | 단계: ${GRID.GRID_COUNT} | 범위: ±${GRID.RANGE_PCT}%\n▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶`;
   out.important(LOG, banner);
   trade.system(LOG, banner);
 

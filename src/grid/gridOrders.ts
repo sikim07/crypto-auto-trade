@@ -1,8 +1,8 @@
 import { GRID } from "./gridConfig";
 import { getState, recordTrade } from "./gridState";
-import { placeLimitOrder, cancelOrder, getOrder, roundPrice } from "../upbit/rest";
+import { placeLimitOrder, cancelOrder, getOrder, roundPrice, getKrwBalance } from "../upbit/rest";
 import { out, trade } from "../common/logger";
-import type { GridLevel } from "../common/types";
+import type { GridLevel, GridTradeRecord } from "../common/types";
 
 const LOG = "grid/orders";
 
@@ -37,6 +37,25 @@ export const placeGridOrders = async (currentPrice: number): Promise<void> => {
   if (!state) return;
 
   const centerIdx = findClosestLevelIndex(currentPrice);
+  const investPerLevel = GRID.TOTAL_INVEST_KRW / GRID.GRID_COUNT;
+
+  // 매수 예정 레벨 수 확인 → 잔고 1회 조회로 판단
+  const buyTargets = state.levels.filter((l) => {
+    if (l.status !== "idle" || l.price >= currentPrice) return false;
+    if (Math.abs(l.index - centerIdx) > GRID.ACTIVE_LEVELS) return false;
+    if (isOnCooldown(l.index)) return false;
+    return true;
+  });
+
+  let availableKrw = Infinity;
+  if (buyTargets.length > 0) {
+    try {
+      availableKrw = await getKrwBalance();
+    } catch {
+      out.warn("balance-check", LOG, "잔고 조회 실패, 매수 스킵");
+      availableKrw = 0;
+    }
+  }
 
   for (const level of state.levels) {
     const dist = Math.abs(level.index - centerIdx);
@@ -45,10 +64,16 @@ export const placeGridOrders = async (currentPrice: number): Promise<void> => {
 
     if (level.status === "idle") {
       if (level.price < currentPrice) {
+        if (availableKrw < investPerLevel) {
+          out.debug("krw-low", LOG, "KRW 잔고 부족(%s원), 매수 스킵", Math.round(availableKrw).toLocaleString());
+          continue;
+        }
         await placeBuyOrder(level);
+        availableKrw -= investPerLevel;
       }
     } else if (level.status === "holding") {
-      if (level.price >= currentPrice || level.index < state.levels.length - 1) {
+      const sellPrice = roundPrice(level.price + state.gridInterval);
+      if (sellPrice > currentPrice) {
         await placeSellOrder(level);
       }
     }
@@ -98,7 +123,7 @@ const placeSellOrder = async (level: GridLevel): Promise<void> => {
   }
 };
 
-export const checkFilledOrders = async (): Promise<void> => {
+export const checkFilledOrders = async (currentPrice: number): Promise<void> => {
   const state = getState();
   if (!state) return;
 
@@ -111,9 +136,9 @@ export const checkFilledOrders = async (): Promise<void> => {
 
       if (order.state === "done") {
         if (level.status === "buy_placed") {
-          handleBuyFilled(level, order);
+          handleBuyFilled(level, order, currentPrice);
         } else if (level.status === "sell_placed") {
-          handleSellFilled(level, order);
+          handleSellFilled(level, order, currentPrice);
         }
       } else if (order.state === "cancel") {
         level.status = level.buyVolume ? "holding" : "idle";
@@ -126,10 +151,15 @@ export const checkFilledOrders = async (): Promise<void> => {
   }
 };
 
-const handleBuyFilled = (level: GridLevel, order: { executed_volume: string; paid_fee: string }): void => {
+const handleBuyFilled = (level: GridLevel, order: { executed_volume: string; paid_fee: string }, currentPrice: number): void => {
   const executedVolume = parseFloat(order.executed_volume);
   const fee = parseFloat(order.paid_fee);
   const totalCost = level.price * executedVolume;
+
+  const record: GridTradeRecord = {
+    timestamp: Date.now(), side: "buy", levelIndex: level.index,
+    price: level.price, volume: executedVolume, fee, currentPrice,
+  };
 
   level.status = "holding";
   level.orderUuid = undefined;
@@ -137,12 +167,15 @@ const handleBuyFilled = (level: GridLevel, order: { executed_volume: string; pai
   level.buyVolume = executedVolume;
   level.filledCount += 1;
 
+  // 매수는 손익 0, 이력만 기록
+  recordTrade(0, 0, record);
+
   trade.fill(LOG, "[BUY] %s | %s원 × %s = %s원 | 수수료 %s원",
     GRID.MARKET, level.price.toLocaleString(), executedVolume.toFixed(8),
     Math.round(totalCost).toLocaleString(), Math.round(fee).toLocaleString());
 };
 
-const handleSellFilled = (level: GridLevel, order: { executed_volume: string; paid_fee: string }): void => {
+const handleSellFilled = (level: GridLevel, order: { executed_volume: string; paid_fee: string }, currentPrice: number): void => {
   const state = getState();
   if (!state) return;
 
@@ -153,11 +186,14 @@ const handleSellFilled = (level: GridLevel, order: { executed_volume: string; pa
   const buyFee = buyPrice * volume * GRID.FEE_RATE;
   const grossProfit = (sellPrice - buyPrice) * volume;
   const netProfit = grossProfit - fee - buyFee;
-  const totalSell = sellPrice * volume;
   const totalBuy = buyPrice * volume;
   const profitRate = totalBuy > 0 ? (netProfit / totalBuy * 100) : 0;
 
-  recordTrade(netProfit, fee + buyFee);
+  const record: GridTradeRecord = {
+    timestamp: Date.now(), side: "sell", levelIndex: level.index,
+    price: sellPrice, volume, fee: fee + buyFee, profit: netProfit, currentPrice,
+  };
+  recordTrade(netProfit, fee + buyFee, record);
 
   level.status = "idle";
   level.orderUuid = undefined;
@@ -165,13 +201,14 @@ const handleSellFilled = (level: GridLevel, order: { executed_volume: string; pa
   level.buyVolume = undefined;
   level.filledCount += 1;
 
-  trade.fill(LOG, "[SELL] %s | 매수 %s → 매도 %s원 | 수수료 %s원 | 순익 %s원(%s%%) | 누적 %s원/%s건",
+  trade.fill(LOG, "[SELL] %s | 매수 %s → 매도 %s원 | 수수료 %s원 | 순익 %s원(%s%%) | 누적 %s원/%s건 | 금일 %s원",
     GRID.MARKET, buyPrice.toLocaleString(), sellPrice.toLocaleString(),
     Math.round(fee + buyFee).toLocaleString(),
     (netProfit >= 0 ? "+" : "") + netProfit.toFixed(0),
     (profitRate >= 0 ? "+" : "") + profitRate.toFixed(2),
     (state.totalRealizedProfit >= 0 ? "+" : "") + state.totalRealizedProfit.toFixed(0),
-    String(state.tradeCount));
+    String(state.tradeCount),
+    (state.dailyRealizedProfit >= 0 ? "+" : "") + state.dailyRealizedProfit.toFixed(0));
 };
 
 export const cancelAllOrders = async (): Promise<number> => {

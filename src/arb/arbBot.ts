@@ -77,14 +77,7 @@ const shutdown = async (signal: string): Promise<void> => {
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 const main = async (): Promise<void> => {
-  const banner = [
-    "▶▶▶ ARB BOT DEPLOY ▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶",
-    `  PID: ${process.pid}`,
-    `  모드: ${ARB.DRY_RUN ? "DRY RUN (모니터링 전용)" : "LIVE"}`,
-    `  대상: ${ARB.SYMBOLS.join(", ")}`,
-    `  거래 금액: $${ARB.TRADE_AMOUNT_USDT} | 최소 스프레드: ${ARB.MIN_SPREAD_PCT}%`,
-    "▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶",
-  ].join("\n");
+  const banner = `\n▶▶▶ ARB BOT DEPLOY ▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶\n  PID: ${process.pid} | 모드: ${ARB.DRY_RUN ? "DRY RUN" : "LIVE"} | 대상: ${ARB.SYMBOLS.join(", ")} | $${ARB.TRADE_AMOUNT_USDT} | 최소 ${ARB.MIN_SPREAD_PCT}%\n▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶`;
   out.important(LOG, banner);
   trade.system(LOG, banner);
 

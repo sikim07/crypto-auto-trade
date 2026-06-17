@@ -93,6 +93,17 @@ export interface GridLevel {
   filledCount: number;
 }
 
+export interface GridTradeRecord {
+  timestamp: number;
+  side: "buy" | "sell";
+  levelIndex: number;
+  price: number;
+  volume: number;
+  fee: number;
+  profit?: number;       // sell 시에만
+  currentPrice: number;  // 체결 시점 시장가 (백테스트용)
+}
+
 export interface GridState {
   market: string;
   rangeUpper: number;
@@ -102,6 +113,9 @@ export interface GridState {
   totalRealizedProfit: number;
   totalFees: number;
   tradeCount: number;
+  dailyRealizedProfit: number;
+  dailyDate: string;  // "YYYY-MM-DD" KST
+  tradeHistory: GridTradeRecord[];
   startedAt: number;
   lastUpdatedAt: number;
 }

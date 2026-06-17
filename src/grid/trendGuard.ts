@@ -45,9 +45,9 @@ export const checkRangeBreak = (currentPrice: number): void => {
   if (!state) return;
 
   if (currentPrice > state.rangeUpper || currentPrice < state.rangeLower) {
-    status = "STOPPED";
+    status = "PAUSED";
     const direction = currentPrice > state.rangeUpper ? "상단" : "하단";
-    trade.system(LOG, "범위 %s 이탈 (현재가: %s) → STOPPED",
+    trade.system(LOG, "범위 %s 이탈 (현재가: %s) → PAUSED (범위 복귀 시 자동재개)",
       direction, currentPrice.toLocaleString());
   }
 };
@@ -70,8 +70,7 @@ export const tryResume = (currentPrice: number): boolean => {
     status = "ACTIVE";
     consecutiveSameSide = 0;
     lastSide = null;
-    out.info(LOG, "조건 해소 → ACTIVE 복귀");
-    trade.system(LOG, "조건 해소 → ACTIVE 복귀");
+    trade.system(LOG, "범위 복귀 (현재가: %s) → ACTIVE", currentPrice.toLocaleString());
     return true;
   }
   return false;
