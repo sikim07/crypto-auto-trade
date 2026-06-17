@@ -1,7 +1,7 @@
 import { ARB } from "./arbConfig";
 import { startCexFeed, stopCexFeed, startDexFeed, stopDexFeed, getCexPrice } from "./priceFeed";
 import { findOpportunity, getSpreadSummary } from "./profitCalc";
-import { executeTrade, getDailyStats } from "./arbExecutor";
+import { executeTrade } from "./arbExecutor";
 import { verifyConnection as verifyBinance } from "../exchange/binance";
 import { verifySolanaConnection } from "../exchange/dex/jupiter";
 import { out, trade } from "../common/logger";
@@ -52,31 +52,16 @@ const printHeartbeat = (): void => {
 };
 
 const printReport = (): void => {
-  const lines: string[] = [
-    "",
-    "════════════════════════════════════════",
-    `  [ARB REPORT] ${ARB.DRY_RUN ? "(DRY RUN)" : "(LIVE)"}`,
-    `  모니터링: ${ARB.SYMBOLS.join(", ")}`,
-    `  기회 감지: ${opportunitiesFound}건`,
-  ];
-
-  if (!ARB.DRY_RUN) {
-    const stats = getDailyStats();
-    lines.push(`  금일 거래: ${stats.dailyTradeCount}건 | 손실: $${stats.dailyLossUsd.toFixed(2)}`);
-  }
-
   for (const symbol of ARB.SYMBOLS) {
     const summary = getSpreadSummary(symbol);
-    if (summary) lines.push(`  ${summary}`);
-    else {
+    if (summary) {
+      out.important(LOG, "[ARB] %s | opp=%s", summary, String(opportunitiesFound));
+    } else {
       const cex = getCexPrice(symbol);
-      lines.push(`  ${symbol}: CEX=${cex ? `bid=${cex.bid} ask=${cex.ask}` : "대기중"} | DEX=대기중`);
+      out.important(LOG, "[ARB] %s CEX=%s DEX=대기중 | opp=%s",
+        symbol, cex ? `${cex.bid}/${cex.ask}` : "대기중", String(opportunitiesFound));
     }
   }
-
-  lines.push("════════════════════════════════════════");
-  lines.push("");
-  out.important(LOG, lines.join("\n"));
 };
 
 const shutdown = async (signal: string): Promise<void> => {
@@ -93,12 +78,12 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 const main = async (): Promise<void> => {
   const banner = [
-    "════════════════════════════════════════",
-    `  차익거래 봇 시작 (PID: ${process.pid})`,
+    "▶▶▶ ARB BOT DEPLOY ▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶",
+    `  PID: ${process.pid}`,
     `  모드: ${ARB.DRY_RUN ? "DRY RUN (모니터링 전용)" : "LIVE"}`,
     `  대상: ${ARB.SYMBOLS.join(", ")}`,
     `  거래 금액: $${ARB.TRADE_AMOUNT_USDT} | 최소 스프레드: ${ARB.MIN_SPREAD_PCT}%`,
-    "════════════════════════════════════════",
+    "▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶",
   ].join("\n");
   out.important(LOG, banner);
   trade.system(LOG, banner);

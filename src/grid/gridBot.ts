@@ -3,7 +3,7 @@ import { initGrid, loadState, saveState, getState, getDailyProfit } from "./grid
 import { placeGridOrders, checkFilledOrders, cancelAllOrders } from "./gridOrders";
 import { getGuardStatus, checkRangeBreak, checkDailyLoss, tryResume, recordApiError, resetApiError } from "./trendGuard";
 import { printReport } from "./gridReport";
-import { getAccounts, getTicker } from "../upbit/rest";
+import { getAccounts, getTicker, getCoinBalance, placeMarketSellOrder } from "../upbit/rest";
 import { out, trade } from "../common/logger";
 import { UPBIT_ACCESS_KEY, UPBIT_SECRET_KEY } from "../common/config";
 
@@ -11,11 +11,9 @@ const LOG = "grid/bot";
 
 let pollTimer: ReturnType<typeof setInterval> | null = null;
 let saveTimer: ReturnType<typeof setInterval> | null = null;
-let reportTimer: ReturnType<typeof setInterval> | null = null;
 let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
 let lastPrice = 0;
 let isProcessing = false;
-let tickCount = 0;
 
 const getCurrentPrice = async (): Promise<number> => {
   const tickers = await getTicker([GRID.MARKET]);
@@ -52,7 +50,6 @@ const tick = async (): Promise<void> => {
   try {
     const price = await getCurrentPrice();
     lastPrice = price;
-    tickCount++;
     resetApiError();
 
     const guard = getGuardStatus();
@@ -97,7 +94,6 @@ const shutdown = async (signal: string): Promise<void> => {
 
   if (pollTimer) clearInterval(pollTimer);
   if (saveTimer) clearInterval(saveTimer);
-  if (reportTimer) clearInterval(reportTimer);
   if (heartbeatTimer) clearInterval(heartbeatTimer);
 
   try {
@@ -120,11 +116,11 @@ const shutdown = async (signal: string): Promise<void> => {
 const main = async (): Promise<void> => {
   // ── 시작 배너 (양쪽 로그 모두) ──
   const banner = [
-    "════════════════════════════════════════",
-    `  그리드 봇 시작 (PID: ${process.pid})`,
+    "▶▶▶ GRID BOT DEPLOY ▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶",
+    `  PID: ${process.pid}`,
     `  종목: ${GRID.MARKET} | 투입: ${GRID.TOTAL_INVEST_KRW.toLocaleString()}원`,
     `  단계: ${GRID.GRID_COUNT} | 범위: ±${GRID.RANGE_PCT}%`,
-    "════════════════════════════════════════",
+    "▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶",
   ].join("\n");
   out.important(LOG, banner);
   trade.system(LOG, banner);
@@ -145,6 +141,22 @@ const main = async (): Promise<void> => {
   // ── 상태 복구 또는 신규 초기화 ──
   const restored = loadState();
   if (!restored) {
+    // 설정 변경 등으로 새 그리드 생성 전, 기존 보유 코인 정리
+    const holding = await getCoinBalance(GRID.MARKET);
+    if (holding.volume > 0) {
+      const holdingValue = holding.volume * holding.avgPrice;
+      trade.system(LOG, "기존 보유분 감지: %s %s (평균 %s원, 약 %s원) — 시장가 매도",
+        holding.volume.toFixed(8), GRID.MARKET,
+        holding.avgPrice.toLocaleString(), Math.round(holdingValue).toLocaleString());
+      try {
+        await placeMarketSellOrder(GRID.MARKET, holding.volume);
+        trade.fill(LOG, "[SELL-清算] %s | 수량 %s | 평균매수가 %s원 — 시장가 매도 완료",
+          GRID.MARKET, holding.volume.toFixed(8), holding.avgPrice.toLocaleString());
+      } catch (e) {
+        trade.system(LOG, "보유분 매도 실패: %s — 수동 정리 필요", (e as Error).message);
+      }
+    }
+
     const price = await getCurrentPrice();
     lastPrice = price;
     initGrid(price);
@@ -161,15 +173,9 @@ const main = async (): Promise<void> => {
   // ── 메인 루프 ──
   pollTimer = setInterval(tick, GRID.POLL_INTERVAL_MS);
   saveTimer = setInterval(saveState, GRID.STATE_SAVE_INTERVAL_MS);
-  reportTimer = setInterval(() => {
-    if (lastPrice > 0) printReport(lastPrice);
-  }, GRID.REPORT_INTERVAL_MS);
-
-  // Heartbeat (10분마다)
+  // Heartbeat (10분마다, 리포트 겸용)
   heartbeatTimer = setInterval(() => {
-    const guard = getGuardStatus();
-    out.debug("heartbeat", LOG, "alive | price=%s guard=%s ticks=%s",
-      lastPrice > 0 ? lastPrice.toLocaleString() : "N/A", guard, String(tickCount));
+    if (lastPrice > 0) printReport(lastPrice);
   }, 10 * 60 * 1000);
 
   // 즉시 첫 리포트

@@ -129,6 +129,7 @@ export const checkFilledOrders = async (): Promise<void> => {
 const handleBuyFilled = (level: GridLevel, order: { executed_volume: string; paid_fee: string }): void => {
   const executedVolume = parseFloat(order.executed_volume);
   const fee = parseFloat(order.paid_fee);
+  const totalCost = level.price * executedVolume;
 
   level.status = "holding";
   level.orderUuid = undefined;
@@ -136,9 +137,9 @@ const handleBuyFilled = (level: GridLevel, order: { executed_volume: string; pai
   level.buyVolume = executedVolume;
   level.filledCount += 1;
 
-  trade.fill(LOG, "[BUY] idx=%s 가격=%s 수량=%s 수수료=%s원",
-    String(level.index), level.price.toLocaleString(),
-    executedVolume.toFixed(8), fee.toFixed(0));
+  trade.fill(LOG, "[BUY] %s | %s원 × %s = %s원 | 수수료 %s원",
+    GRID.MARKET, level.price.toLocaleString(), executedVolume.toFixed(8),
+    Math.round(totalCost).toLocaleString(), Math.round(fee).toLocaleString());
 };
 
 const handleSellFilled = (level: GridLevel, order: { executed_volume: string; paid_fee: string }): void => {
@@ -152,6 +153,9 @@ const handleSellFilled = (level: GridLevel, order: { executed_volume: string; pa
   const buyFee = buyPrice * volume * GRID.FEE_RATE;
   const grossProfit = (sellPrice - buyPrice) * volume;
   const netProfit = grossProfit - fee - buyFee;
+  const totalSell = sellPrice * volume;
+  const totalBuy = buyPrice * volume;
+  const profitRate = totalBuy > 0 ? (netProfit / totalBuy * 100) : 0;
 
   recordTrade(netProfit, fee + buyFee);
 
@@ -161,9 +165,12 @@ const handleSellFilled = (level: GridLevel, order: { executed_volume: string; pa
   level.buyVolume = undefined;
   level.filledCount += 1;
 
-  trade.fill(LOG, "[SELL] idx=%s 매수=%s 매도=%s 순익=%s원 (누적: %s원 / %s건)",
-    String(level.index), buyPrice.toLocaleString(), sellPrice.toLocaleString(),
-    netProfit.toFixed(0), state.totalRealizedProfit.toFixed(0),
+  trade.fill(LOG, "[SELL] %s | 매수 %s → 매도 %s원 | 수수료 %s원 | 순익 %s원(%s%%) | 누적 %s원/%s건",
+    GRID.MARKET, buyPrice.toLocaleString(), sellPrice.toLocaleString(),
+    Math.round(fee + buyFee).toLocaleString(),
+    (netProfit >= 0 ? "+" : "") + netProfit.toFixed(0),
+    (profitRate >= 0 ? "+" : "") + profitRate.toFixed(2),
+    (state.totalRealizedProfit >= 0 ? "+" : "") + state.totalRealizedProfit.toFixed(0),
     String(state.tradeCount));
 };
 

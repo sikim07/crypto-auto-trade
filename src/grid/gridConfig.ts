@@ -19,7 +19,6 @@ export const GRID = {
   // 주기 (ms)
   POLL_INTERVAL_MS: 10_000,
   STATE_SAVE_INTERVAL_MS: 30_000,
-  REPORT_INTERVAL_MS: 60 * 60 * 1000,
 
   // 안전장치
   DAILY_MAX_LOSS_KRW: 30_000,
