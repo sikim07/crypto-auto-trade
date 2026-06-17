@@ -9,21 +9,11 @@ const LOG = "arb/bot";
 
 let pollTimer: ReturnType<typeof setInterval> | null = null;
 let reportTimer: ReturnType<typeof setInterval> | null = null;
-let consecutiveFails = 0;
-let failCooldownUntil = 0;
 let dailyProfitUsd = 0;
 let dailyTradeCount = 0;
 let opportunitiesFound = 0;
 
 const scan = (): void => {
-  const now = Date.now();
-
-  // 쿨다운 체크
-  if (now < failCooldownUntil) return;
-
-  // 일일 손실 한도
-  if (dailyProfitUsd <= -ARB.DAILY_MAX_LOSS_USD) return;
-
   for (const symbol of ARB.SYMBOLS) {
     const opp = findOpportunity(symbol);
     if (!opp) continue;
@@ -31,16 +21,10 @@ const scan = (): void => {
     opportunitiesFound++;
 
     if (ARB.DRY_RUN) {
-      // 모니터링 전용 — 실행하지 않고 로그만
-      trade.fill(LOG, "[DRY] %s %s 스프레드=%.3f%% 순익=$%.2f (CEX=%.4f DEX=%.4f)",
+      trade.fill(LOG, "[DRY] %s %s spread=%.3f%% net=$%.2f (CEX=%.4f DEX=%.4f)",
         opp.symbol, opp.direction,
         opp.spreadPct, opp.netProfit,
         opp.cexPrice, opp.dexPrice);
-    } else {
-      // TODO: Phase 2-4에서 실제 실행 구현
-      trade.fill(LOG, "[EXEC] %s %s 스프레드=%.3f%% 순익=$%.2f",
-        opp.symbol, opp.direction,
-        opp.spreadPct, opp.netProfit);
     }
   }
 };
@@ -51,12 +35,9 @@ const printReport = (): void => {
     "════════════════════════════════════════",
     `  [ARB REPORT] ${ARB.DRY_RUN ? "(DRY RUN)" : "(LIVE)"}`,
     `  모니터링: ${ARB.SYMBOLS.join(", ")}`,
-    `  거래: ${dailyTradeCount}건 | 기회 감지: ${opportunitiesFound}건`,
-    `  일일 손익: $${dailyProfitUsd.toFixed(2)}`,
-    `  임계값: 스프레드 ≥${ARB.MIN_SPREAD_PCT}% / 순익 ≥$${ARB.MIN_PROFIT_USD}`,
+    `  기회 감지: ${opportunitiesFound}건`,
   ];
 
-  // 현재 스프레드 상태
   for (const symbol of ARB.SYMBOLS) {
     const summary = getSpreadSummary(symbol);
     if (summary) lines.push(`  ${summary}`);
@@ -68,25 +49,19 @@ const printReport = (): void => {
 
   lines.push("════════════════════════════════════════");
   lines.push("");
-
   out.important(LOG, lines.join("\n"));
 };
 
 const shutdown = async (signal: string): Promise<void> => {
-  trade.system(LOG, "%s 수신, 종료 중...", signal);
-
+  trade.system(LOG, "%s 수신, 종료", signal);
   if (pollTimer) clearInterval(pollTimer);
   if (reportTimer) clearInterval(reportTimer);
-
   stopCexFeed();
   stopDexFeed();
-
-  printReport();
-  trade.system(LOG, "차익거래 봇 종료 | 거래: %s건 | 손익: $%s",
-    String(dailyTradeCount), dailyProfitUsd.toFixed(2));
-
   process.exit(0);
 };
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 const main = async (): Promise<void> => {
   const banner = [
@@ -102,35 +77,44 @@ const main = async (): Promise<void> => {
 
   // API 키 확인
   if (!BINANCE_API_KEY || !BINANCE_SECRET_KEY) {
-    trade.system(LOG, "BINANCE API 키 미설정 — 종료");
+    trade.system(LOG, "BINANCE API 키 미설정 — 60초 후 재시도");
+    out.important(LOG, "BINANCE API 키 미설정 — 60초 대기 후 PM2가 재시작");
+    await sleep(60_000);
     process.exit(1);
   }
 
-  // Binance 연결 확인
-  const connected = await verifyBinance();
+  // Binance 연결 확인 (최대 3회 재시도)
+  let connected = false;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    connected = await verifyBinance();
+    if (connected) break;
+    out.important(LOG, "Binance 연결 실패 (%s/3), %s초 후 재시도",
+      String(attempt), String(attempt * 10));
+    await sleep(attempt * 10_000);
+  }
+
   if (!connected) {
-    trade.system(LOG, "Binance 연결 실패 — 종료");
+    trade.system(LOG, "Binance 연결 3회 실패 — PM2 재시작 대기");
+    out.important(LOG, "Binance 연결 3회 실패 — PM2가 재시작합니다");
     process.exit(1);
   }
 
-  // 가격 피드 시작
-  out.info(LOG, "CEX 가격 피드 시작 (Binance WebSocket)");
+  // CEX 가격 피드 시작
+  out.info(LOG, "CEX 가격 피드 시작");
   startCexFeed();
 
-  // DEX 피드는 CEX 가격이 들어온 후 시작 (2초 대기)
+  // DEX 피드는 CEX 가격이 들어온 후 시작
   setTimeout(() => {
-    out.info(LOG, "DEX 가격 피드 시작 (Jupiter API)");
+    out.info(LOG, "DEX 가격 피드 시작");
     startDexFeed();
-  }, 2_000);
+  }, 3_000);
 
-  // 스캔 루프 (CEX는 실시간, DEX 폴링 주기에 맞춤)
+  // 스캔 루프
   pollTimer = setInterval(scan, ARB.PRICE_POLL_MS);
 
-  // 리포트
+  // 리포트 (30분마다 + 30초 후 첫 리포트)
   reportTimer = setInterval(printReport, ARB.REPORT_INTERVAL_MS);
-
-  // 10초 후 첫 리포트
-  setTimeout(printReport, 10_000);
+  setTimeout(printReport, 30_000);
 
   // 종료 시그널
   process.on("SIGINT", () => shutdown("SIGINT"));
@@ -139,5 +123,6 @@ const main = async (): Promise<void> => {
 
 main().catch((e) => {
   trade.system(LOG, "시작 실패: %s", (e as Error).message);
-  process.exit(1);
+  // 즉시 종료하지 않고 대기 — PM2 restart_delay와 함께 작동
+  setTimeout(() => process.exit(1), 5_000);
 });
