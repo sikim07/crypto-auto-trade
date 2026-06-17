@@ -3,5 +3,6 @@ dist/
 .env
 *.log
 logs/
+grid-state.json
 .DS_Store
 .claude

@@ -1,7 +1,7 @@
 import * as fs from "fs";
 import * as path from "path";
 import { GRID } from "./gridConfig";
-import { logger } from "../common/logger";
+import { out } from "../common/logger";
 import type { GridState, GridLevel } from "../common/types";
 
 const LOG = "grid/state";
@@ -40,7 +40,7 @@ export const initGrid = (currentPrice: number): GridState => {
     lastUpdatedAt: Date.now(),
   };
 
-  logger.info(LOG, "그리드 초기화: %s ~ %s, 간격 %s원, %s단계",
+  out.info(LOG, "그리드 초기화: %s ~ %s, 간격 %s원, %s단계",
     lower.toLocaleString(), upper.toLocaleString(),
     interval.toLocaleString(), String(GRID.GRID_COUNT));
 
@@ -60,7 +60,7 @@ export const saveState = (): void => {
   try {
     fs.writeFileSync(stateFilePath, JSON.stringify(state, null, 2));
   } catch (e) {
-    logger.error(LOG, "상태 저장 실패: %s", (e as Error).message);
+    out.warn("state-save", LOG, "상태 저장 실패: %s", (e as Error).message);
   }
 };
 
@@ -69,11 +69,11 @@ export const loadState = (): GridState | null => {
     if (!fs.existsSync(stateFilePath)) return null;
     const raw = fs.readFileSync(stateFilePath, "utf-8");
     state = JSON.parse(raw) as GridState;
-    logger.info(LOG, "상태 복구: %s건 거래, 누적 수익 %s원",
+    out.info(LOG, "상태 복구: %s건 거래, 누적 수익 %s원",
       String(state.tradeCount), state.totalRealizedProfit.toFixed(0));
     return state;
   } catch (e) {
-    logger.error(LOG, "상태 복구 실패: %s", (e as Error).message);
+    out.warn("state-load", LOG, "상태 복구 실패: %s", (e as Error).message);
     return null;
   }
 };

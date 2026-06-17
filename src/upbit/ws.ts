@@ -1,6 +1,6 @@
 import WebSocket from "ws";
 import { UPBIT_WS_URL, WS_WATCHDOG_MS } from "../common/config";
-import { logger } from "../common/logger";
+import { out } from "../common/logger";
 
 const LOG = "upbit/ws";
 
@@ -22,7 +22,7 @@ let currentCallback: TickerCallback | null = null;
 const resetWatchdog = (): void => {
   if (watchdog) clearTimeout(watchdog);
   watchdog = setTimeout(() => {
-    logger.warn(LOG, "무응답 감지, 재연결");
+    out.warn("ws-watchdog", LOG, "무응답 감지, 재연결");
     connect(currentMarkets, currentCallback!);
   }, WS_WATCHDOG_MS);
 };
@@ -33,14 +33,14 @@ const connect = (markets: string[], callback: TickerCallback): void => {
     ws = null;
   }
 
-  logger.info(LOG, "WebSocket 연결: %s개 종목", String(markets.length));
+  out.info(LOG, "WebSocket 연결: %s개 종목", String(markets.length));
   const socket = new WebSocket(UPBIT_WS_URL);
   ws = socket;
   currentMarkets = markets;
   currentCallback = callback;
 
   socket.on("open", () => {
-    logger.info(LOG, "연결 성공, 구독 요청");
+    out.info(LOG, "연결 성공, 구독 요청");
     socket.send(JSON.stringify([
       { ticket: `grid-${Date.now()}` },
       { type: "ticker", codes: markets, isOnlyRealtime: true },
@@ -57,11 +57,11 @@ const connect = (markets: string[], callback: TickerCallback): void => {
   });
 
   socket.on("error", (err) => {
-    logger.error(LOG, "WebSocket 오류: %s", (err as Error).message);
+    out.warn("ws-error", LOG, "WebSocket 오류: %s", (err as Error).message);
   });
 
   socket.on("close", (code) => {
-    if (code !== 1000) logger.warn(LOG, "연결 종료 (code: %s)", String(code));
+    if (code !== 1000) out.warn("ws-close", LOG, "연결 종료 (code: %s)", String(code));
     ws = null;
     if (watchdog) { clearTimeout(watchdog); watchdog = null; }
   });

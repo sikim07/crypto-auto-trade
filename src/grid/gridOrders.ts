@@ -1,7 +1,7 @@
 import { GRID } from "./gridConfig";
 import { getState, recordTrade } from "./gridState";
-import { placeLimitOrder, cancelOrder, getOrder, getOpenOrders } from "../upbit/rest";
-import { logger } from "../common/logger";
+import { placeLimitOrder, cancelOrder, getOrder } from "../upbit/rest";
+import { out, trade } from "../common/logger";
 import type { GridLevel } from "../common/types";
 
 const LOG = "grid/orders";
@@ -43,7 +43,7 @@ export const placeGridOrders = async (currentPrice: number): Promise<void> => {
 const placeBuyOrder = async (level: GridLevel): Promise<void> => {
   const investPerLevel = GRID.TOTAL_INVEST_KRW / GRID.GRID_COUNT;
   if (investPerLevel < GRID.MIN_ORDER_KRW) {
-    logger.warn(LOG, "단계당 금액 부족: %s원", investPerLevel.toFixed(0));
+    out.warn("invest-low", LOG, "단계당 금액 부족: %s원", investPerLevel.toFixed(0));
     return;
   }
 
@@ -52,10 +52,10 @@ const placeBuyOrder = async (level: GridLevel): Promise<void> => {
     const order = await placeLimitOrder(GRID.MARKET, "bid", level.price, volume);
     level.status = "buy_placed";
     level.orderUuid = order.uuid;
-    logger.info(LOG, "[BUY 배치] idx=%s 가격=%s",
+    out.debug("buy-place-" + level.index, LOG, "[BUY 배치] idx=%s 가격=%s",
       String(level.index), level.price.toLocaleString());
   } catch (e) {
-    logger.error(LOG, "[BUY 실패] idx=%s: %s",
+    out.warn("buy-fail-" + level.index, LOG, "[BUY 실패] idx=%s: %s",
       String(level.index), (e as Error).message);
   }
 };
@@ -71,10 +71,10 @@ const placeSellOrder = async (level: GridLevel): Promise<void> => {
     const order = await placeLimitOrder(GRID.MARKET, "ask", sellPrice, level.buyVolume);
     level.status = "sell_placed";
     level.orderUuid = order.uuid;
-    logger.info(LOG, "[SELL 배치] idx=%s 매수가=%s 매도가=%s",
+    out.debug("sell-place-" + level.index, LOG, "[SELL 배치] idx=%s 매수가=%s 매도가=%s",
       String(level.index), level.price.toLocaleString(), sellPrice.toLocaleString());
   } catch (e) {
-    logger.error(LOG, "[SELL 실패] idx=%s: %s",
+    out.warn("sell-fail-" + level.index, LOG, "[SELL 실패] idx=%s: %s",
       String(level.index), (e as Error).message);
   }
 };
@@ -97,17 +97,17 @@ export const checkFilledOrders = async (): Promise<void> => {
           handleSellFilled(level, order);
         }
       } else if (order.state === "cancel") {
-        level.status = "idle";
+        level.status = level.buyVolume ? "holding" : "idle";
         level.orderUuid = undefined;
       }
     } catch (e) {
-      logger.error(LOG, "[체결확인 실패] idx=%s: %s",
+      out.warn("check-fill-" + level.index, LOG, "[체결확인 실패] idx=%s: %s",
         String(level.index), (e as Error).message);
     }
   }
 };
 
-const handleBuyFilled = (level: GridLevel, order: { executed_volume: string; paid_fee: string; price: string }): void => {
+const handleBuyFilled = (level: GridLevel, order: { executed_volume: string; paid_fee: string }): void => {
   const executedVolume = parseFloat(order.executed_volume);
   const fee = parseFloat(order.paid_fee);
 
@@ -117,7 +117,8 @@ const handleBuyFilled = (level: GridLevel, order: { executed_volume: string; pai
   level.buyVolume = executedVolume;
   level.filledCount += 1;
 
-  logger.info(LOG, "[BUY 체결] idx=%s 가격=%s 수량=%s 수수료=%s원",
+  // err 로그 — 트레이드 이력
+  trade.fill(LOG, "[BUY] idx=%s 가격=%s 수량=%s 수수료=%s원",
     String(level.index), level.price.toLocaleString(),
     executedVolume.toFixed(8), fee.toFixed(0));
 };
@@ -142,9 +143,11 @@ const handleSellFilled = (level: GridLevel, order: { executed_volume: string; pa
   level.buyVolume = undefined;
   level.filledCount += 1;
 
-  logger.info(LOG, "[SELL 체결] idx=%s 매수=%s 매도=%s 순익=%s원 (누적: %s원)",
+  // err 로그 — 트레이드 이력
+  trade.fill(LOG, "[SELL] idx=%s 매수=%s 매도=%s 순익=%s원 (누적: %s원 / %s건)",
     String(level.index), buyPrice.toLocaleString(), sellPrice.toLocaleString(),
-    netProfit.toFixed(0), state.totalRealizedProfit.toFixed(0));
+    netProfit.toFixed(0), state.totalRealizedProfit.toFixed(0),
+    String(state.tradeCount));
 };
 
 export const cancelAllOrders = async (): Promise<number> => {
@@ -160,13 +163,13 @@ export const cancelAllOrders = async (): Promise<number> => {
         level.orderUuid = undefined;
         cancelled++;
       } catch (e) {
-        logger.error(LOG, "[취소 실패] idx=%s: %s",
+        out.warn("cancel-" + level.index, LOG, "[취소 실패] idx=%s: %s",
           String(level.index), (e as Error).message);
       }
     }
   }
 
-  logger.info(LOG, "%s건 주문 취소", String(cancelled));
+  if (cancelled > 0) out.info(LOG, "%s건 주문 취소", String(cancelled));
   return cancelled;
 };
 

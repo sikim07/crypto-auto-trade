@@ -2,7 +2,7 @@ import { GRID } from "./gridConfig";
 import { getState } from "./gridState";
 import { getGuardStatus } from "./trendGuard";
 import { getPlacedCount } from "./gridOrders";
-import { logger } from "../common/logger";
+import { out } from "../common/logger";
 
 const LOG = "grid/report";
 
@@ -29,7 +29,7 @@ export const printReport = (currentPrice: number): void => {
   const elapsed = Date.now() - state.startedAt;
   const hours = (elapsed / (1000 * 60 * 60)).toFixed(1);
 
-  logger.info(LOG, [
+  out.important(LOG, [
     "",
     "════════════════════════════════════════",
     `  [GRID REPORT] ${GRID.MARKET}`,

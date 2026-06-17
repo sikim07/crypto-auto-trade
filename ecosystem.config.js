@@ -8,6 +8,10 @@ module.exports = {
       autorestart: true,
       watch: false,
       max_memory_restart: "200M",
+      error_file: "logs/err.log",
+      out_file: "logs/out.log",
+      merge_logs: true,
+      log_date_format: "",
       env: {
         NODE_ENV: "production",
       },

@@ -1,7 +1,6 @@
 import { GRID } from "./gridConfig";
 import { getState } from "./gridState";
-import { getCandles } from "../upbit/rest";
-import { logger } from "../common/logger";
+import { out, trade } from "../common/logger";
 
 const LOG = "grid/guard";
 
@@ -24,7 +23,7 @@ export const recordFill = (side: "buy" | "sell"): void => {
 
   if (consecutiveSameSide >= GRID.MAX_CONSECUTIVE_SAME_SIDE) {
     status = "PAUSED";
-    logger.warn(LOG, "같은 방향 %s회 연속 체결 → PAUSED (%s)",
+    trade.system(LOG, "같은 방향 %s회 연속 → PAUSED (%s)",
       String(consecutiveSameSide), side);
   }
 };
@@ -33,7 +32,7 @@ export const recordApiError = (): void => {
   apiErrorCount++;
   if (apiErrorCount >= GRID.API_ERROR_THRESHOLD) {
     status = "STOPPED";
-    logger.error(LOG, "API 에러 %s회 → STOPPED", String(apiErrorCount));
+    trade.system(LOG, "API 에러 %s회 연속 → STOPPED", String(apiErrorCount));
   }
 };
 
@@ -48,7 +47,7 @@ export const checkRangeBreak = (currentPrice: number): void => {
   if (currentPrice > state.rangeUpper || currentPrice < state.rangeLower) {
     status = "STOPPED";
     const direction = currentPrice > state.rangeUpper ? "상단" : "하단";
-    logger.warn(LOG, "범위 %s 이탈 (현재가: %s) → STOPPED",
+    trade.system(LOG, "범위 %s 이탈 (현재가: %s) → STOPPED",
       direction, currentPrice.toLocaleString());
   }
 };
@@ -56,7 +55,7 @@ export const checkRangeBreak = (currentPrice: number): void => {
 export const checkDailyLoss = (dailyProfit: number): void => {
   if (dailyProfit <= -GRID.DAILY_MAX_LOSS_KRW) {
     status = "STOPPED";
-    logger.warn(LOG, "일일 손실 한도 도달 (%s원) → STOPPED",
+    trade.system(LOG, "일일 손실 한도 도달 (%s원) → STOPPED",
       dailyProfit.toFixed(0));
   }
 };
@@ -71,7 +70,8 @@ export const tryResume = (currentPrice: number): boolean => {
     status = "ACTIVE";
     consecutiveSameSide = 0;
     lastSide = null;
-    logger.info(LOG, "조건 해소 → ACTIVE 복귀");
+    out.info(LOG, "조건 해소 → ACTIVE 복귀");
+    trade.system(LOG, "조건 해소 → ACTIVE 복귀");
     return true;
   }
   return false;
@@ -82,10 +82,10 @@ export const forceResume = (): void => {
   consecutiveSameSide = 0;
   lastSide = null;
   apiErrorCount = 0;
-  logger.info(LOG, "강제 ACTIVE 복귀");
+  trade.system(LOG, "강제 ACTIVE 복귀");
 };
 
 export const forceStop = (): void => {
   status = "STOPPED";
-  logger.info(LOG, "강제 STOPPED");
+  trade.system(LOG, "강제 STOPPED");
 };
