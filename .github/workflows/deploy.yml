@@ -39,7 +39,7 @@ jobs:
             git fetch --all
             git checkout main
             git reset --hard origin/main
-            git clean -fd
+            git clean -fd -e .env -e logs/
           "
 
       # 5. 의존성 설치
