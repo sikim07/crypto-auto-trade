@@ -57,7 +57,7 @@ const fetchJupiterQuote = async (
   try {
     const { default: axios } = await import("axios");
     const lamports = Math.round(amount * Math.pow(10, decimals));
-    const { data } = await axios.get("https://quote-api.jup.ag/v6/quote", {
+    const { data } = await axios.get("https://api.jup.ag/swap/v1/quote", {
       params: {
         inputMint,
         outputMint,
