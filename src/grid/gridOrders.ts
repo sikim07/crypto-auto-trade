@@ -1,5 +1,6 @@
 import { GRID } from "./gridConfig";
 import { getState, recordTrade } from "./gridState";
+import { recordFill } from "./trendGuard";
 import { placeLimitOrder, cancelOrder, getOrder, roundPrice, getKrwBalance } from "../upbit/rest";
 import { out, trade } from "../common/logger";
 import type { GridLevel, GridTradeRecord } from "../common/types";
@@ -54,6 +55,23 @@ export const placeGridOrders = async (currentPrice: number): Promise<void> => {
     } catch {
       out.warn("balance-check", LOG, "잔고 조회 실패, 매수 스킵");
       availableKrw = 0;
+    }
+  }
+
+  // ACTIVE 범위 밖 미체결 주문 자동 취소 (잔고 잠금 해제)
+  for (const level of state.levels) {
+    const dist = Math.abs(level.index - centerIdx);
+    if (dist > GRID.ACTIVE_LEVELS && level.orderUuid &&
+        (level.status === "buy_placed" || level.status === "sell_placed")) {
+      try {
+        await cancelOrder(level.orderUuid);
+        level.status = level.buyVolume ? "holding" : "idle";
+        level.orderUuid = undefined;
+        out.info(LOG, "[범위외 취소] idx=%s 가격=%s", String(level.index), level.price.toLocaleString());
+      } catch (e) {
+        out.warn("cancel-oor-" + level.index, LOG, "[범위외 취소 실패] idx=%s: %s",
+          String(level.index), (e as Error).message);
+      }
     }
   }
 
@@ -169,6 +187,7 @@ const handleBuyFilled = (level: GridLevel, order: { executed_volume: string; pai
 
   // 매수는 손익 0, 이력만 기록
   recordTrade(0, 0, record);
+  recordFill("buy");
 
   trade.fill(LOG, "[BUY] %s | %s원 × %s = %s원 | 수수료 %s원",
     GRID.MARKET, level.price.toLocaleString(), executedVolume.toFixed(8),
@@ -194,6 +213,7 @@ const handleSellFilled = (level: GridLevel, order: { executed_volume: string; pa
     price: sellPrice, volume, fee: fee + buyFee, profit: netProfit, currentPrice,
   };
   recordTrade(netProfit, fee + buyFee, record);
+  recordFill("sell");
 
   level.status = "idle";
   level.orderUuid = undefined;

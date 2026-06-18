@@ -72,6 +72,9 @@ export const recordTrade = (profit: number, fee: number, record: GridTradeRecord
   state.tradeCount += 1;
   state.dailyRealizedProfit += profit;
   state.tradeHistory.push(record);
+  if (state.tradeHistory.length > 200) {
+    state.tradeHistory = state.tradeHistory.slice(-200);
+  }
   state.lastUpdatedAt = Date.now();
 };
 
