@@ -1,3 +1,15 @@
+/**
+ * 그리드 상태 관리
+ *
+ * 그리드 봇의 전체 상태를 메모리에 유지하고, JSON 파일로 주기적 백업한다.
+ * PM2 재시작이나 서버 리부팅 시 파일에서 상태를 복구하여 연속 운영이 가능하다.
+ *
+ * 주요 기능:
+ *   - initGrid(): 현재가 기준으로 그리드 레벨(가격 단계) 생성
+ *   - recordTrade(): 매수/매도 체결 시 수익/수수료 기록
+ *   - saveState() / loadState(): JSON 파일로 백업/복구
+ *   - checkDailyReset(): KST 자정 기준 일일 손익 리셋
+ */
 import * as fs from "fs";
 import * as path from "path";
 import { GRID } from "./gridConfig";
@@ -9,12 +21,21 @@ const stateFilePath = path.resolve(process.cwd(), GRID.STATE_FILE);
 
 let state: GridState | null = null;
 
+/** KST 기준 오늘 날짜 문자열 ("YYYY-MM-DD") */
 const getKstDate = (): string => {
   return new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Seoul" });
 };
 
 export const getState = (): GridState | null => state;
 
+/**
+ * 그리드 초기화: 현재가를 중심으로 상하 범위를 계산하고 레벨 배열 생성
+ *
+ * 예: 현재가 1억, ±2%, 5단계
+ *   → 하단 98,000,000 ~ 상단 102,000,000
+ *   → 간격 800,000원
+ *   → levels[0]=98,000,000, levels[1]=98,800,000, ..., levels[5]=102,000,000
+ */
 export const initGrid = (currentPrice: number): GridState => {
   const upper = GRID.RANGE_UPPER || Math.round(currentPrice * (1 + GRID.RANGE_PCT / 100));
   const lower = GRID.RANGE_LOWER || Math.round(currentPrice * (1 - GRID.RANGE_PCT / 100));
@@ -54,6 +75,7 @@ export const initGrid = (currentPrice: number): GridState => {
   return state;
 };
 
+/** KST 자정이 지나면 일일 손익을 0으로 리셋 */
 export const checkDailyReset = (): void => {
   if (!state) return;
   const today = getKstDate();
@@ -65,6 +87,7 @@ export const checkDailyReset = (): void => {
   }
 };
 
+/** 거래 결과 기록 (수익, 수수료, 이력) */
 export const recordTrade = (profit: number, fee: number, record: GridTradeRecord): void => {
   if (!state) return;
   state.totalRealizedProfit += profit;
@@ -72,12 +95,14 @@ export const recordTrade = (profit: number, fee: number, record: GridTradeRecord
   state.tradeCount += 1;
   state.dailyRealizedProfit += profit;
   state.tradeHistory.push(record);
+  // 최근 200건만 유지 (메모리/파일 크기 관리)
   if (state.tradeHistory.length > 200) {
     state.tradeHistory = state.tradeHistory.slice(-200);
   }
   state.lastUpdatedAt = Date.now();
 };
 
+/** 상태를 JSON 파일로 저장 (재시작 시 복구용) */
 export const saveState = (): void => {
   if (!state) return;
   try {
@@ -87,6 +112,10 @@ export const saveState = (): void => {
   }
 };
 
+/**
+ * 저장된 상태 파일에서 복구
+ * 종목이나 단계 수가 변경되었으면 null 반환 (새 그리드 생성 유도)
+ */
 export const loadState = (): GridState | null => {
   try {
     if (!fs.existsSync(stateFilePath)) return null;
@@ -101,7 +130,7 @@ export const loadState = (): GridState | null => {
       return null;
     }
 
-    // 기존 state 마이그레이션 (dailyDate, tradeHistory 없는 경우)
+    // 기존 state 마이그레이션 (이전 버전에 없던 필드 보정)
     if (!saved.dailyDate) saved.dailyDate = getKstDate();
     if (saved.dailyRealizedProfit === undefined) saved.dailyRealizedProfit = 0;
     if (!saved.tradeHistory) saved.tradeHistory = [];

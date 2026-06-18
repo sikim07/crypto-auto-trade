@@ -1,3 +1,17 @@
+/**
+ * 그리드 봇 메인 엔트리포인트
+ *
+ * 초기화 → 메인 루프 → 종료 처리의 전체 라이프사이클을 관리한다.
+ *
+ * 실행 흐름:
+ *   1. Upbit API 연결 확인 + KRW 잔고 체크
+ *   2. 저장된 상태 복구 또는 신규 그리드 생성
+ *   3. 메인 루프 (10초 간격):
+ *      - 현재가 조회 → 체결 확인 → 안전 체크 → 주문 배치
+ *   4. SIGINT/SIGTERM 수신 시 미체결 주문 취소 후 상태 저장
+ *
+ * PM2로 운영: pm2 start ecosystem.config.js
+ */
 import { GRID } from "./gridConfig";
 import { initGrid, loadState, saveState, getState, getDailyProfit, checkDailyReset } from "./gridState";
 import { placeGridOrders, checkFilledOrders, cancelAllOrders } from "./gridOrders";
@@ -13,14 +27,16 @@ let pollTimer: ReturnType<typeof setInterval> | null = null;
 let saveTimer: ReturnType<typeof setInterval> | null = null;
 let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
 let lastPrice = 0;
-let isProcessing = false;
+let isProcessing = false;  // 동시 실행 방지 (이전 tick이 완료되지 않았으면 스킵)
 
+/** Upbit 티커 API로 현재가 조회 */
 const getCurrentPrice = async (): Promise<number> => {
   const tickers = await getTicker([GRID.MARKET]);
   if (tickers.length === 0) throw new Error("티커 조회 실패");
   return tickers[0].trade_price;
 };
 
+/** 시작 시 API 연결 상태 및 잔고 확인 */
 const verifyApiConnection = async (): Promise<boolean> => {
   try {
     const accounts = await getAccounts();
@@ -43,6 +59,14 @@ const verifyApiConnection = async (): Promise<boolean> => {
   }
 };
 
+/**
+ * 메인 루프 (10초마다 실행)
+ *
+ * 1. 현재가 조회
+ * 2. 체결 확인 (STOPPED/PAUSED 상태에서도 수행 — 이미 배치된 주문의 체결은 처리해야 함)
+ * 3. 안전 체크 (범위 이탈, 일일 손실)
+ * 4. 주문 배치 (ACTIVE 상태에서만)
+ */
 const tick = async (): Promise<void> => {
   if (isProcessing) return;
   isProcessing = true;
@@ -54,7 +78,6 @@ const tick = async (): Promise<void> => {
 
     const guard = getGuardStatus();
 
-    // 일일 리셋 체크 + 체결 확인 (STOPPED/PAUSED에서도 수행)
     checkDailyReset();
     await checkFilledOrders(price);
 
@@ -75,7 +98,6 @@ const tick = async (): Promise<void> => {
       return;
     }
 
-    // 주문 배치
     await placeGridOrders(price);
 
   } catch (e) {
@@ -86,6 +108,7 @@ const tick = async (): Promise<void> => {
   isProcessing = false;
 };
 
+/** 종료 처리: 미체결 주문 전체 취소 + 상태 저장 */
 const shutdown = async (signal: string): Promise<void> => {
   trade.system(LOG, "%s 수신, 종료 처리 중...", signal);
   out.info(LOG, "%s 수신, 종료 처리 중...", signal);
@@ -112,40 +135,40 @@ const shutdown = async (signal: string): Promise<void> => {
 };
 
 const main = async (): Promise<void> => {
-  // ── 시작 배너 (양쪽 로그 모두) ──
-  const banner = `\n▶▶▶ GRID BOT DEPLOY ▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶\n  PID: ${process.pid} | 종목: ${GRID.MARKET} | 투입: ${GRID.TOTAL_INVEST_KRW.toLocaleString()}원 | 단계: ${GRID.GRID_COUNT} | 범위: ±${GRID.RANGE_PCT}%\n▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶▶`;
+  // ── 시작 배너 ──
+  const banner = `\n>>> GRID BOT DEPLOY >>>>>>>>>>>>>>>>>>>>>>>\n  PID: ${process.pid} | 종목: ${GRID.MARKET} | 투입: ${GRID.TOTAL_INVEST_KRW.toLocaleString()}원 | 단계: ${GRID.GRID_COUNT} | 범위: +-${GRID.RANGE_PCT}%\n>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>`;
   out.important(LOG, banner);
   trade.system(LOG, banner);
 
   // ── API 키 확인 ──
   if (!UPBIT_ACCESS_KEY || !UPBIT_SECRET_KEY) {
-    trade.system(LOG, "UPBIT API 키 미설정 — 종료");
+    trade.system(LOG, "UPBIT API 키 미설정 -- 종료");
     process.exit(1);
   }
 
   // ── API 연결 확인 ──
   const connected = await verifyApiConnection();
   if (!connected) {
-    trade.system(LOG, "API 연결 실패 — 종료");
+    trade.system(LOG, "API 연결 실패 -- 종료");
     process.exit(1);
   }
 
   // ── 상태 복구 또는 신규 초기화 ──
   const restored = loadState();
   if (!restored) {
-    // 설정 변경 등으로 새 그리드 생성 전, 기존 보유 코인 정리
+    // 이전 그리드에서 남은 보유 코인이 있으면 시장가 매도로 정리
     const holding = await getCoinBalance(GRID.MARKET);
     if (holding.volume > 0) {
       const holdingValue = holding.volume * holding.avgPrice;
-      trade.system(LOG, "기존 보유분 감지: %s %s (평균 %s원, 약 %s원) — 시장가 매도",
+      trade.system(LOG, "기존 보유분 감지: %s %s (평균 %s원, 약 %s원) -- 시장가 매도",
         holding.volume.toFixed(8), GRID.MARKET,
         holding.avgPrice.toLocaleString(), Math.round(holdingValue).toLocaleString());
       try {
         await placeMarketSellOrder(GRID.MARKET, holding.volume);
-        trade.fill(LOG, "[SELL-清算] %s | 수량 %s | 평균매수가 %s원 — 시장가 매도 완료",
+        trade.fill(LOG, "[SELL-청산] %s | 수량 %s | 평균매수가 %s원 -- 시장가 매도 완료",
           GRID.MARKET, holding.volume.toFixed(8), holding.avgPrice.toLocaleString());
       } catch (e) {
-        trade.system(LOG, "보유분 매도 실패: %s — 수동 정리 필요", (e as Error).message);
+        trade.system(LOG, "보유분 매도 실패: %s -- 수동 정리 필요", (e as Error).message);
       }
     }
 
@@ -162,18 +185,16 @@ const main = async (): Promise<void> => {
 
   saveState();
 
-  // ── 메인 루프 ──
+  // ── 메인 루프 시작 ──
   pollTimer = setInterval(tick, GRID.POLL_INTERVAL_MS);
   saveTimer = setInterval(saveState, GRID.STATE_SAVE_INTERVAL_MS);
-  // Heartbeat (10분마다, 리포트 겸용)
   heartbeatTimer = setInterval(() => {
     if (lastPrice > 0) printReport(lastPrice);
-  }, 10 * 60 * 1000);
+  }, 10 * 60 * 1000); // 10분마다 리포트
 
-  // 즉시 첫 리포트
   if (lastPrice > 0) printReport(lastPrice);
 
-  // 종료 시그널
+  // 종료 시그널 핸들링
   process.on("SIGINT", () => shutdown("SIGINT"));
   process.on("SIGTERM", () => shutdown("SIGTERM"));
 };

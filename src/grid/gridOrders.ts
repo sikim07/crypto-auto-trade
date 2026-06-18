@@ -1,3 +1,19 @@
+/**
+ * 그리드 주문 관리
+ *
+ * Upbit API를 사용하여 그리드 레벨별로 지정가 주문을 관리한다.
+ *
+ * 핵심 로직:
+ *   1. placeGridOrders(): 현재가 기준으로 아래에 매수, 위에 매도 지정가 주문 배치
+ *   2. checkFilledOrders(): 주기적으로 주문 상태를 확인하여 체결 감지
+ *   3. 매수 체결 → 한 단계 위에 매도 주문 배치 (수익 실현 대기)
+ *   4. 매도 체결 → 수익 기록 + 원래 단계를 idle로 복귀 (재매수 대기)
+ *
+ * 안전 기능:
+ *   - ACTIVE_LEVELS: 현재가 근처 ±N단계만 실제 주문 (API 호출/잔고 효율화)
+ *   - 주문 실패 시 5분 쿨다운 (무한 재시도 방지)
+ *   - 범위 밖 미체결 주문 자동 취소 (잔고 잠금 해제)
+ */
 import { GRID } from "./gridConfig";
 import { getState, recordTrade } from "./gridState";
 import { recordFill } from "./trendGuard";
@@ -21,6 +37,7 @@ const isOnCooldown = (index: number): boolean => {
   return true;
 };
 
+/** 현재가에 가장 가까운 그리드 레벨 인덱스 반환 */
 const findClosestLevelIndex = (price: number): number => {
   const state = getState();
   if (!state) return -1;
@@ -33,6 +50,13 @@ const findClosestLevelIndex = (price: number): number => {
   return closest;
 };
 
+/**
+ * 현재가 기준으로 그리드 주문 배치
+ *
+ * - 현재가 아래 idle 레벨 → 매수 지정가 주문
+ * - holding 레벨 → 한 단계 위 가격에 매도 지정가 주문
+ * - ACTIVE_LEVELS 범위 밖 미체결 주문은 자동 취소
+ */
 export const placeGridOrders = async (currentPrice: number): Promise<void> => {
   const state = getState();
   if (!state) return;
@@ -40,7 +64,7 @@ export const placeGridOrders = async (currentPrice: number): Promise<void> => {
   const centerIdx = findClosestLevelIndex(currentPrice);
   const investPerLevel = GRID.TOTAL_INVEST_KRW / GRID.GRID_COUNT;
 
-  // 매수 예정 레벨 수 확인 → 잔고 1회 조회로 판단
+  // 매수 대상 레벨 확인 → KRW 잔고를 1회만 조회하여 효율화
   const buyTargets = state.levels.filter((l) => {
     if (l.status !== "idle" || l.price >= currentPrice) return false;
     if (Math.abs(l.index - centerIdx) > GRID.ACTIVE_LEVELS) return false;
@@ -75,12 +99,14 @@ export const placeGridOrders = async (currentPrice: number): Promise<void> => {
     }
   }
 
+  // ACTIVE 범위 내 레벨에 주문 배치
   for (const level of state.levels) {
     const dist = Math.abs(level.index - centerIdx);
     if (dist > GRID.ACTIVE_LEVELS) continue;
     if (isOnCooldown(level.index)) continue;
 
     if (level.status === "idle") {
+      // 현재가보다 낮은 레벨에 매수 주문
       if (level.price < currentPrice) {
         if (availableKrw < investPerLevel) {
           out.debug("krw-low", LOG, "KRW 잔고 부족(%s원), 매수 스킵", Math.round(availableKrw).toLocaleString());
@@ -90,6 +116,7 @@ export const placeGridOrders = async (currentPrice: number): Promise<void> => {
         availableKrw -= investPerLevel;
       }
     } else if (level.status === "holding") {
+      // 보유 중인 레벨 → 한 단계 위 가격에 매도 주문
       const sellPrice = roundPrice(level.price + state.gridInterval);
       if (sellPrice > currentPrice) {
         await placeSellOrder(level);
@@ -98,6 +125,7 @@ export const placeGridOrders = async (currentPrice: number): Promise<void> => {
   }
 };
 
+/** 매수 지정가 주문 배치 */
 const placeBuyOrder = async (level: GridLevel): Promise<void> => {
   const investPerLevel = GRID.TOTAL_INVEST_KRW / GRID.GRID_COUNT;
   if (investPerLevel < GRID.MIN_ORDER_KRW) {
@@ -121,6 +149,7 @@ const placeBuyOrder = async (level: GridLevel): Promise<void> => {
   }
 };
 
+/** 매도 지정가 주문 배치 (매수 체결 후 한 단계 위 가격으로) */
 const placeSellOrder = async (level: GridLevel): Promise<void> => {
   if (!level.buyVolume || level.buyVolume <= 0) return;
 
@@ -141,6 +170,10 @@ const placeSellOrder = async (level: GridLevel): Promise<void> => {
   }
 };
 
+/**
+ * 미체결 주문의 체결 여부 확인
+ * Upbit API로 각 주문의 상태를 폴링하여 체결(done)을 감지한다.
+ */
 export const checkFilledOrders = async (currentPrice: number): Promise<void> => {
   const state = getState();
   if (!state) return;
@@ -159,6 +192,7 @@ export const checkFilledOrders = async (currentPrice: number): Promise<void> => 
           handleSellFilled(level, order, currentPrice);
         }
       } else if (order.state === "cancel") {
+        // 외부에서 취소된 주문 처리
         level.status = level.buyVolume ? "holding" : "idle";
         level.orderUuid = undefined;
       }
@@ -169,6 +203,7 @@ export const checkFilledOrders = async (currentPrice: number): Promise<void> => 
   }
 };
 
+/** 매수 체결 처리: 레벨을 holding 상태로 전환, 체결 정보 저장 */
 const handleBuyFilled = (level: GridLevel, order: { executed_volume: string; paid_fee: string }, currentPrice: number): void => {
   const executedVolume = parseFloat(order.executed_volume);
   const fee = parseFloat(order.paid_fee);
@@ -185,15 +220,20 @@ const handleBuyFilled = (level: GridLevel, order: { executed_volume: string; pai
   level.buyVolume = executedVolume;
   level.filledCount += 1;
 
-  // 매수는 손익 0, 이력만 기록
+  // 매수는 손익 0, 이력만 기록 (매도 시 수익 계산)
   recordTrade(0, 0, record);
   recordFill("buy");
 
-  trade.fill(LOG, "[BUY] %s | %s원 × %s = %s원 | 수수료 %s원",
+  trade.fill(LOG, "[BUY] %s | %s원 x %s = %s원 | 수수료 %s원",
     GRID.MARKET, level.price.toLocaleString(), executedVolume.toFixed(8),
     Math.round(totalCost).toLocaleString(), Math.round(fee).toLocaleString());
 };
 
+/**
+ * 매도 체결 처리: 수익 계산 후 기록, 레벨을 idle로 복귀
+ *
+ * 수익 = (매도가 - 매수가) x 수량 - 왕복 수수료
+ */
 const handleSellFilled = (level: GridLevel, order: { executed_volume: string; paid_fee: string }, currentPrice: number): void => {
   const state = getState();
   if (!state) return;
@@ -202,9 +242,9 @@ const handleSellFilled = (level: GridLevel, order: { executed_volume: string; pa
   const buyPrice = level.buyPrice ?? level.price;
   const volume = parseFloat(order.executed_volume);
   const fee = parseFloat(order.paid_fee);
-  const buyFee = buyPrice * volume * GRID.FEE_RATE;
-  const grossProfit = (sellPrice - buyPrice) * volume;
-  const netProfit = grossProfit - fee - buyFee;
+  const buyFee = buyPrice * volume * GRID.FEE_RATE;    // 매수 시 수수료 추정
+  const grossProfit = (sellPrice - buyPrice) * volume;  // 세전 수익
+  const netProfit = grossProfit - fee - buyFee;          // 순수익
   const totalBuy = buyPrice * volume;
   const profitRate = totalBuy > 0 ? (netProfit / totalBuy * 100) : 0;
 
@@ -215,6 +255,7 @@ const handleSellFilled = (level: GridLevel, order: { executed_volume: string; pa
   recordTrade(netProfit, fee + buyFee, record);
   recordFill("sell");
 
+  // 레벨을 idle로 복귀 → 다음 매수 주문 대기
   level.status = "idle";
   level.orderUuid = undefined;
   level.buyPrice = undefined;
@@ -231,6 +272,7 @@ const handleSellFilled = (level: GridLevel, order: { executed_volume: string; pa
     (state.dailyRealizedProfit >= 0 ? "+" : "") + state.dailyRealizedProfit.toFixed(0));
 };
 
+/** 모든 미체결 주문 취소 (봇 종료/중단 시) */
 export const cancelAllOrders = async (): Promise<number> => {
   const state = getState();
   if (!state) return 0;
@@ -254,6 +296,7 @@ export const cancelAllOrders = async (): Promise<number> => {
   return cancelled;
 };
 
+/** 현재 배치된 매수/매도 주문 수 반환 */
 export const getPlacedCount = (): { buys: number; sells: number } => {
   const state = getState();
   if (!state) return { buys: 0, sells: 0 };
